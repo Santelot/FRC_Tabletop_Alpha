@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FRC AUTON · 3D</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- ============================================================
+       SETUP SCREEN
+       ============================================================ -->
+  <section class="screen screen--setup is-active" id="screen-setup">
+
+    <header class="topbar">
+      <div class="topbar__title">FRC AUTON · 3D · v0.3</div>
+      <div class="topbar__sub">Rapid React · Match setup</div>
+    </header>
+
+    <main class="setup-container">
+      <div class="setup">
+        <div class="alliance alliance--red">
+          <h2 class="alliance__title">RED ALLIANCE</h2>
+          <div class="bot-row">
+            <div class="bot" data-bot="R1"></div>
+            <div class="bot" data-bot="R2"></div>
+            <div class="bot" data-bot="R3"></div>
+          </div>
+        </div>
+
+        <div class="alliance alliance--blue">
+          <h2 class="alliance__title">BLUE ALLIANCE</h2>
+          <div class="bot-row">
+            <div class="bot" data-bot="B1"></div>
+            <div class="bot" data-bot="B2"></div>
+            <div class="bot" data-bot="B3"></div>
+          </div>
+        </div>
+
+        <div class="setup__actions">
+          <button id="btn-run" class="btn btn--gold">RUN AUTON</button>
+          <button id="btn-reset" class="btn">RESET DEFAULTS</button>
+        </div>
+      </div>
+    </main>
+
+  </section>
+
+  <!-- ============================================================
+       MATCH SCREEN — full-bleed Three.js canvas + HUD overlay
+       ============================================================ -->
+  <section class="screen screen--match" id="screen-match">
+
+    <!-- The Three.js canvas mounts here -->
+    <div class="stage-canvas" id="stage-canvas">
+      <canvas id="three-canvas"></canvas>
+
+      <!-- Overlays on top of the canvas -->
+      <div class="banner" id="banner"></div>
+      <div class="flash" id="flash"></div>
+    </div>
+
+    <!-- Floating top controls -->
+    <div class="match-topbar">
+      <button id="btn-back" class="match-btn match-btn--back">← BACK TO SETUP</button>
+      <div class="match-topbar__title">RAPID REACT · PRACTICE MATCH</div>
+      <div class="view-toggle">
+        <button class="view-btn is-active" data-view="broadcast">BROADCAST</button>
+        <button class="view-btn" data-view="topdown">TOP-DOWN</button>
+        <button class="view-btn" data-view="orbit">FREE ORBIT</button>
+      </div>
+    </div>
+
+    <!-- FRC-STYLE HUD — fixed at bottom of viewport -->
+    <div class="match-hud">
+
+      <div class="match-hud__panel match-hud__panel--red">
+        <div class="match-hud__alliance-tag">RED ALLIANCE</div>
+        <div class="match-hud__teams">
+          <span class="match-hud__team">R1</span>
+          <span class="match-hud__team">R2</span>
+          <span class="match-hud__team">R3</span>
+        </div>
+        <div class="match-hud__score" id="score-red">0</div>
+      </div>
+
+      <div class="match-hud__center">
+        <div class="match-hud__phase" id="phase-display">AUTON</div>
+        <div class="match-hud__match-name">RAPID REACT</div>
+        <div class="match-hud__match-sub" id="phase-sub">READY</div>
+      </div>
+
+      <div class="match-hud__panel match-hud__panel--blue">
+        <div class="match-hud__score" id="score-blue">0</div>
+        <div class="match-hud__teams">
+          <span class="match-hud__team">B1</span>
+          <span class="match-hud__team">B2</span>
+          <span class="match-hud__team">B3</span>
+        </div>
+        <div class="match-hud__alliance-tag">BLUE ALLIANCE</div>
+      </div>
+
+    </div>
+
+    <!-- Activity log — floating, collapsible -->
+    <div class="match-log" id="match-log-wrap">
+      <button class="match-log__toggle" id="log-toggle">LOG</button>
+      <div class="match-log__panel" id="log">
+        <div class="log__placeholder">Match starting...</div>
+      </div>
+    </div>
+
+  </section>
+
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
