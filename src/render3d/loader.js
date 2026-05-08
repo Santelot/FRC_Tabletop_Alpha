@@ -19,9 +19,8 @@ const loader = new GLTFLoader();
 const cache = new Map();  // modelKey → cloned-source Object3D
 
 /**
- * Load a model by key (e.g. 'bot_tank'). Returns a fresh Group whose
- * outer transform is identity, with corrective transforms applied to
- * the inner loaded mesh.
+ * Load a model by key. Returns a fresh Group whose outer transform is
+ * identity, with corrective transforms applied to the inner loaded mesh.
  *
  * If the .glb file fails to load (404, parse error), returns a placeholder
  * primitive sized appropriately so the rest of the code keeps working.
@@ -38,6 +37,7 @@ export async function loadModel(modelKey, placeholderOpts = {}) {
   // Try to load the file
   let inner;
   try {
+    if (!path) throw new Error(`No path defined for model key '${modelKey}'`);
     const gltf = await loader.loadAsync(path);
     inner = gltf.scene;
     cache.set(modelKey, inner.clone(true));
@@ -50,7 +50,7 @@ export async function loadModel(modelKey, placeholderOpts = {}) {
       }
     });
   } catch (err) {
-    console.warn(`[loader] Could not load ${path}, using placeholder:`, err.message);
+    console.warn(`[loader] Could not load ${path || modelKey}, using placeholder:`, err.message);
     inner = makePlaceholder(modelKey, placeholderOpts);
   }
 
@@ -92,8 +92,8 @@ function wrapAndTransform(inner, transform) {
 function makePlaceholder(modelKey, opts = {}) {
   const group = new THREE.Group();
 
-  if (modelKey === 'field') {
-    // Big flat carpet rectangle
+  // ---- Field ----
+  if (modelKey.startsWith('field_')) {
     const geo = new THREE.BoxGeometry(35, 0.05, 18);
     const mat = new THREE.MeshStandardMaterial({ color: 0x2c2d34, roughness: 0.95 });
     const m = new THREE.Mesh(geo, mat);
@@ -101,7 +101,8 @@ function makePlaceholder(modelKey, opts = {}) {
     m.receiveShadow = true;
     group.add(m);
 
-  } else if (modelKey === 'hub') {
+  // ---- Hub ----
+  } else if (modelKey.startsWith('hub_')) {
     // Stepped gold tower
     const colors = [0xb57500, 0xffb627, 0xffd15c, 0xffe9a8];
     const heights = [0, 0.4, 0.9, 1.5];
@@ -122,8 +123,8 @@ function makePlaceholder(modelKey, opts = {}) {
       group.add(m);
     }
 
-  } else if (modelKey === 'cargo') {
-    // Yellow ball
+  // ---- Cargo ----
+  } else if (modelKey.startsWith('cargo_')) {
     const geo = new THREE.SphereGeometry(0.35, 16, 16);
     const mat = new THREE.MeshStandardMaterial({
       color: 0xffc23a,
@@ -138,15 +139,17 @@ function makePlaceholder(modelKey, opts = {}) {
     m.receiveShadow = true;
     group.add(m);
 
+  // ---- Bot ----
   } else if (modelKey.startsWith('bot_')) {
-    // Drivetrain-coded box with a turret cone
+    // Use opts.drivetrain (passed in from bots.js) since the modelKey now
+    // includes alliance and scoring suffixes.
     const drivetrainColors = {
-      bot_tank:      0x6b4423,
-      bot_westcoast: 0x4a5560,
-      bot_mecanum:   0x7a5c8c,
-      bot_swerve:    0x2e8b6f,
+      tank:       0x6b4423,
+      west_coast: 0x4a5560,
+      mecanum:    0x7a5c8c,
+      swerve:     0x2e8b6f,
     };
-    const baseColor = drivetrainColors[modelKey] || 0x888888;
+    const baseColor = drivetrainColors[opts.drivetrain] || 0x888888;
     const alliance = opts.alliance || 'red';
     const allianceColor = alliance === 'red' ? 0xc72a35 : 0x1e88e5;
 
@@ -169,17 +172,28 @@ function makePlaceholder(modelKey, opts = {}) {
     body.receiveShadow = true;
     group.add(body);
 
-    // Turret arrow pointing +X
-    const turretGeo = new THREE.ConeGeometry(0.15, 0.5, 8);
-    const turretMat = new THREE.MeshStandardMaterial({ color: 0xffb627, metalness: 0.6, roughness: 0.3 });
-    const turret = new THREE.Mesh(turretGeo, turretMat);
-    turret.position.set(0.7, 1.05, 0);
-    turret.rotation.z = -Math.PI / 2; // point along +X
-    turret.castShadow = true;
-    group.add(turret);
+    // Turret/manipulator indicator pointing +X.
+    // For shooter variants, draw a cone (turret); for manipulator, a flat bar.
+    const isManipulator = modelKey.endsWith('_manipulator');
+    if (isManipulator) {
+      const armGeo = new THREE.BoxGeometry(0.7, 0.15, 0.5);
+      const armMat = new THREE.MeshStandardMaterial({ color: 0xffb627, metalness: 0.4, roughness: 0.4 });
+      const arm = new THREE.Mesh(armGeo, armMat);
+      arm.position.set(0.85, 1.05, 0);
+      arm.castShadow = true;
+      group.add(arm);
+    } else {
+      const turretGeo = new THREE.ConeGeometry(0.15, 0.5, 8);
+      const turretMat = new THREE.MeshStandardMaterial({ color: 0xffb627, metalness: 0.6, roughness: 0.3 });
+      const turret = new THREE.Mesh(turretGeo, turretMat);
+      turret.position.set(0.7, 1.05, 0);
+      turret.rotation.z = -Math.PI / 2; // point along +X
+      turret.castShadow = true;
+      group.add(turret);
+    }
 
+  // ---- Unknown ----
   } else {
-    // Generic unknown
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mat = new THREE.MeshStandardMaterial({ color: 0xff00ff });
     group.add(new THREE.Mesh(geo, mat));

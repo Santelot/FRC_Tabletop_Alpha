@@ -529,3 +529,38 @@ body {
   20%  { opacity: 0.55; }
   100% { opacity: 0; }
 }
+
+/* ============================================================
+   SCORE POPUPS — DOM elements anchored to projected 3D positions
+   ============================================================ */
+
+.score-popup {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  font-family: 'Bowlby One', system-ui, sans-serif;
+  font-size: 38px;
+  letter-spacing: 0.02em;
+  color: var(--gold);
+  text-shadow:
+    -2px -2px 0 var(--stroke), 2px -2px 0 var(--stroke),
+    -2px  2px 0 var(--stroke), 2px  2px 0 var(--stroke),
+    0 0 18px rgba(255, 182, 39, 0.7);
+  transform: translate(-50%, -50%) scale(0.3);
+  opacity: 0;
+  transition: none;
+}
+
+.score-popup[data-alliance="red"]  { color: #FFD15C; }
+.score-popup[data-alliance="blue"] { color: #FFD15C; }
+
+.score-popup.is-firing {
+  animation: scorePopupAnim 1100ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes scorePopupAnim {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(0.3); }
+  18%  { opacity: 1; transform: translate(-50%, -50%) scale(1.4); }
+  60%  { opacity: 1; transform: translate(-50%, -90%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -130%) scale(0.95); }
+}

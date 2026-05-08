@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { loadModel } from './loader.js';
 import { hexCenter, computePiecePositions } from '../sim/hex.js';
+import { ACTIVE_CHALLENGE, CHALLENGES } from '../config.js';
 
 /**
  * Returns:
@@ -18,8 +19,9 @@ export async function loadPieces() {
   const group = new THREE.Group();
   group.name = 'pieces';
 
-  // Load the model template once, then clone for each piece.
-  const template = await loadModel('cargo');
+  // Load the cargo model for the active challenge.
+  const cargoKey = CHALLENGES[ACTIVE_CHALLENGE].cargo;
+  const template = await loadModel(cargoKey);
 
   const pieces = positions.map(p => {
     const mesh = template.clone(true);

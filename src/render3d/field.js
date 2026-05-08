@@ -4,7 +4,7 @@
 
 import * as THREE from 'three';
 import { loadModel } from './loader.js';
-import { HEX_SIZE } from '../config.js';
+import { HEX_SIZE, ACTIVE_CHALLENGE, CHALLENGES } from '../config.js';
 import {
   allHexes, hexCenter, HUB_HEXES, HUB_KEYS, hexKey, ROW_COUNTS,
 } from '../sim/hex.js';
@@ -26,9 +26,9 @@ export function buildHexGrid({ visible = true } = {}) {
   for (let i = 0; i < 6; i++) {
     const a = (Math.PI / 3) * i + Math.PI / 6;
     localPts.push(new THREE.Vector3(
-      Math.cos(a) * HEX_SIZE * 0.5,
+      Math.cos(a) * HEX_SIZE * 0.95,
       0,
-      Math.sin(a) * HEX_SIZE * 0.5,
+      Math.sin(a) * HEX_SIZE * 0.95,
     ));
   }
   localPts.push(localPts[0].clone());  // close the loop
@@ -72,20 +72,23 @@ export function buildHexGrid({ visible = true } = {}) {
 }
 
 /**
- * Loads the field model (.glb) at the field origin.
+ * Loads the field model for the active challenge.
  * If the file is missing, the placeholder (a flat carpet rectangle) is used.
  */
 export async function loadFieldModel() {
-  const model = await loadModel('field');
+  const fieldKey = CHALLENGES[ACTIVE_CHALLENGE].field;
+  const model = await loadModel(fieldKey);
   model.name = 'field-model';
   return model;
 }
 
 /**
- * Loads the hub model (.glb) at the center of the hub hex cluster.
+ * Loads the hub model for the active challenge, at the center of the
+ * hub hex cluster.
  */
 export async function loadHubModel() {
-  const model = await loadModel('hub');
+  const hubKey = CHALLENGES[ACTIVE_CHALLENGE].hub;
+  const model = await loadModel(hubKey);
   model.name = 'hub-model';
   const center = hexCenter(7, 4);  // HUB_CENTER
   model.position.set(center.x, 0, center.z);

@@ -4,8 +4,11 @@
 //
 //  This file holds:
 //   1. Game constants ported from v0.2 (drivetrain stats, scoring, etc.)
-//   2. Model paths
-//   3. PER-MODEL TRANSFORM OFFSETS — the most-edited part of this file.
+//   2. The ACTIVE_CHALLENGE selector — switches between Rapid React,
+//      Charged Up, etc.
+//   3. Model paths (per-challenge field/hub/cargo,
+//      per-drivetrain/alliance/scoring bots)
+//   4. PER-MODEL TRANSFORM OFFSETS — the most-edited part of this file.
 //      If a model loads at the wrong position, rotation, or scale, fix it
 //      here instead of going back into Blender/TinkerCad.
 //
@@ -15,12 +18,11 @@
 //    +Z = field depth (away from camera in default broadcast view)
 //
 //  Hex world units: 1 hex flat-to-flat = HEX_SIZE world units (default 2).
-//  So if your bot model is 2 units wide, it fits exactly inside one hex.
 // ============================================================
 
 // ---- World scale ----
 export const HEX_SIZE = 2.0;                    // flat-to-flat, world units
-export const HUB_HEIGHT = 2.5;                  // visual, only used as a hint for camera framing
+export const HUB_HEIGHT = 2.5;                  // visual hint for camera framing
 
 // ---- Game constants (ported from v0.2) ----
 export const DRIVETRAINS = {
@@ -42,7 +44,7 @@ export const SCRIPTS = {
 
 export const SHOT_POINTS = 4;
 export const PARK_POINTS = 2;
-export const TICK_DURATION = 380;  // ms per movement tick
+export const TICK_DURATION = 380;
 export const MAX_TICKS = 10;
 
 export const BOT_IDS = ['R1', 'R2', 'R3', 'B1', 'B2', 'B3'];
@@ -57,106 +59,167 @@ export const DEFAULTS = {
 };
 
 // ============================================================
+//  CHALLENGES — which one is active determines field, hub, cargo,
+//  and which bot scoring variant (shooter vs manipulator) is loaded.
+// ============================================================
+
+/**
+ * Each challenge entry:
+ *   - label:     display name
+ *   - scoring:   'shooter' | 'manipulator' — determines which bot model
+ *                variant is loaded for that challenge.
+ *   - field:     model key for the field
+ *   - hub:       model key for the central scoring structure
+ *   - cargo:     model key for the cargo / piece model
+ */
+export const CHALLENGES = {
+  rapid_react: {
+    label:   'Rapid React',
+    scoring: 'shooter',
+    field:   'field_rapidreact',
+    hub:     'hub_rapidreact',
+    cargo:   'cargo_rapidreact',
+  },
+  charged_up: {
+    label:   'Charged Up',
+    scoring: 'manipulator',
+    field:   'field_chargedup',
+    hub:     'hub_chargedup',
+    cargo:   'cargo_chargedup',
+  },
+};
+
+/**
+ * Switch this to test a different challenge once its models are in place.
+ * Phase 1+2 only need rapid_react; charged_up keys are stubbed for later.
+ */
+export const ACTIVE_CHALLENGE = 'rapid_react';
+
+// ============================================================
 //  MODEL PATHS
 // ============================================================
-//  Vite serves /public/* at the site root, so '/models/foo.glb'
-//  resolves to /public/models/foo.glb at dev time AND at build time.
+//  Vite serves /public/* at the site root.
+//  In production on GitHub Pages, BASE_URL is the repo subpath.
 
-// In production on GitHub Pages, BASE_URL is the repo subpath ('/frc-auton-3d/').
-// In dev, it's '/'.
 const B = import.meta.env.BASE_URL;
 
+/**
+ * Helper: bot model key for a given drivetrain / alliance / scoring type.
+ * Returns e.g. 'bot_tank_red_shooter'.
+ */
+export function botModelKey(drivetrain, alliance, scoringType) {
+  return `bot_${drivetrain}_${alliance}_${scoringType}`;
+}
+
+/**
+ * All model paths.
+ *   - Per-challenge: field, hub, cargo (3 keys × 2 challenges = 6)
+ *   - Per-bot variant: drivetrain × alliance × scoring (4 × 2 × 2 = 16)
+ *
+ * Files live in /public/models/. If a file is missing, the loader falls
+ * back to a placeholder so the rest of the app keeps working.
+ */
 export const MODEL_PATHS = {
-  field:        `${B}models/field.glb`,
-  hub:          `${B}models/hub.glb`,
-  cargo:        `${B}models/cargo.glb`,
-  bot_tank:     `${B}models/bot-tank.glb`,
-  bot_westcoast:`${B}models/bot-westcoast.glb`,
-  bot_mecanum:  `${B}models/bot-mecanum.glb`,
-  bot_swerve:   `${B}models/bot-swerve.glb`,
+  // Rapid React assets
+  field_rapidreact:  `${B}models/field-rapidreact.glb`,
+  hub_rapidreact:    `${B}models/hub-rapidreact.glb`,
+  cargo_rapidreact:  `${B}models/cargo-rapidreact.glb`,
+
+  // Charged Up assets (stubs for later)
+  field_chargedup:   `${B}models/field-chargedup.glb`,
+  hub_chargedup:     `${B}models/hub-chargedup.glb`,
+  cargo_chargedup:   `${B}models/cargo-chargedup.glb`,
+
+  // Bots — RED · SHOOTER (Rapid React)
+  bot_tank_red_shooter:        `${B}models/bot-tank-red-shooter.glb`,
+  bot_west_coast_red_shooter:  `${B}models/bot-westcoast-red-shooter.glb`,
+  bot_mecanum_red_shooter:     `${B}models/bot-mecanum-red-shooter.glb`,
+  bot_swerve_red_shooter:      `${B}models/bot-swerve-red-shooter.glb`,
+
+  // Bots — BLUE · SHOOTER (Rapid React)
+  bot_tank_blue_shooter:       `${B}models/bot-tank-blue-shooter.glb`,
+  bot_west_coast_blue_shooter: `${B}models/bot-westcoast-blue-shooter.glb`,
+  bot_mecanum_blue_shooter:    `${B}models/bot-mecanum-blue-shooter.glb`,
+  bot_swerve_blue_shooter:     `${B}models/bot-swerve-blue-shooter.glb`,
+
+  // Bots — RED · MANIPULATOR (Charged Up etc.)
+  bot_tank_red_manipulator:        `${B}models/bot-tank-red-manipulator.glb`,
+  bot_west_coast_red_manipulator:  `${B}models/bot-westcoast-red-manipulator.glb`,
+  bot_mecanum_red_manipulator:     `${B}models/bot-mecanum-red-manipulator.glb`,
+  bot_swerve_red_manipulator:      `${B}models/bot-swerve-red-manipulator.glb`,
+
+  // Bots — BLUE · MANIPULATOR (Charged Up etc.)
+  bot_tank_blue_manipulator:       `${B}models/bot-tank-blue-manipulator.glb`,
+  bot_west_coast_blue_manipulator: `${B}models/bot-westcoast-blue-manipulator.glb`,
+  bot_mecanum_blue_manipulator:    `${B}models/bot-mecanum-blue-manipulator.glb`,
+  bot_swerve_blue_manipulator:     `${B}models/bot-swerve-blue-manipulator.glb`,
 };
 
 // ============================================================
 //  MODEL TRANSFORMS — fix origin / rotation / scale per model
 // ============================================================
-//  Use these when your model's pivot point isn't at the contact point,
-//  or it doesn't face +X, or it's the wrong size.
+//  See MODELS.md for the full guide on how to use these.
+//  Quick reference:
+//    position: [x, y, z]   shift in world units
+//    rotation: [x, y, z]   Euler angles in DEGREES
+//    scale:    number      uniform; or [sx, sy, sz] for per-axis
 //
-//  All values are applied AT LOAD TIME — the model's mesh is wrapped in
-//  a Three.js Group, and the offsets are applied to the inner mesh, so
-//  the OUTER group still has its origin at (0,0,0) for placement code.
-//
-//  - position: [x, y, z]  shifts the model relative to its loaded origin.
-//      Common case: model's pivot is at its center, you want it on the ground.
-//      Fix: position: [0, +HEIGHT/2, 0]  to shift it up by half its height.
-//  - rotation: [x, y, z]  Euler angles in DEGREES (we convert to radians).
-//      Common case: model faces +Z but we need +X.
-//      Fix: rotation: [0, -90, 0]  rotates 90° around Y axis (clockwise from above).
-//  - scale: number or [x, y, z]   uniform or per-axis scaling.
-//      Common case: model is huge or tiny.
-//      Fix: scale: 0.05  (or whatever ratio gets it to ~2 units wide).
-//
-//  TIP: Run with placeholders first (just don't put .glb files in
-//  public/models/ yet) to see the field layout, then drop your models in
-//  one at a time and tune their transforms here.
+//  Each variant has its own entry so you can tune each independently
+//  if they were modeled with different pivot points.
+
+const IDENTITY = { position: [.3, 0, 0], rotation: [0, 0, 0], scale: 102.0 };
 
 export const MODEL_TRANSFORMS = {
-  field: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
-  hub: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
-  cargo: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
-  bot_tank: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],   // model should face +X. If it doesn't, set [0, -90, 0] or similar.
-    scale:    1.0,
-  },
-  bot_westcoast: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
-  bot_mecanum: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
-  bot_swerve: {
-    position: [0, 0, 0],
-    rotation: [0, 0, 0],
-    scale:    1.0,
-  },
+  // ---- Field / hub / cargo ----
+  field_rapidreact:  { ...IDENTITY },
+  hub_rapidreact:    { position: [1.8, 0, 1.5], rotation: [0, 0, 0], scale: 102.0 },
+  cargo_rapidreact:  { ...IDENTITY },
+  field_chargedup:   { ...IDENTITY },
+  hub_chargedup:     { ...IDENTITY },
+  cargo_chargedup:   { ...IDENTITY },
+
+  // ---- Bots: RED · SHOOTER ----
+  bot_tank_red_shooter:        { ...IDENTITY },
+  bot_west_coast_red_shooter:  { ...IDENTITY },
+  bot_mecanum_red_shooter:     { ...IDENTITY },
+  bot_swerve_red_shooter:      { ...IDENTITY },
+
+  // ---- Bots: BLUE · SHOOTER ----
+  bot_tank_blue_shooter:       { ...IDENTITY },
+  bot_west_coast_blue_shooter: { ...IDENTITY },
+  bot_mecanum_blue_shooter:    { ...IDENTITY },
+  bot_swerve_blue_shooter:     { ...IDENTITY },
+
+  // ---- Bots: RED · MANIPULATOR ----
+  bot_tank_red_manipulator:        { ...IDENTITY },
+  bot_west_coast_red_manipulator:  { ...IDENTITY },
+  bot_mecanum_red_manipulator:     { ...IDENTITY },
+  bot_swerve_red_manipulator:      { ...IDENTITY },
+
+  // ---- Bots: BLUE · MANIPULATOR ----
+  bot_tank_blue_manipulator:       { ...IDENTITY },
+  bot_west_coast_blue_manipulator: { ...IDENTITY },
+  bot_mecanum_blue_manipulator:    { ...IDENTITY },
+  bot_swerve_blue_manipulator:     { ...IDENTITY },
 };
 
 // ============================================================
 //  CAMERA PRESETS
 // ============================================================
-//  Each preset defines where the camera sits and where it looks at.
-//  All positions in world units, relative to field center (0, 0, 0).
 
 export const CAMERA_PRESETS = {
   broadcast: {
-    position: [0, 18, 22],    // angled overhead, looking down at center
+    position: [0, 18, 22],
     lookAt:   [0, 0, 0],
     fov:      45,
   },
   topdown: {
-    position: [0, 32, 0.01],  // straight down (0.01 z avoids gimbal singularity)
+    position: [0, 32, 0.01],
     lookAt:   [0, 0, 0],
     fov:      45,
   },
   orbit: {
-    position: [22, 14, 22],   // perspective angle, user can drag
+    position: [22, 14, 22],
     lookAt:   [0, 0, 0],
     fov:      50,
   },
@@ -190,7 +253,7 @@ export const LIGHTING = {
   hubGlow: {
     color:     0xffb627,
     intensity: 1.2,
-    position:  [0, 4, 0],   // sits at the center, just above hub
+    position:  [0, 4, 0],
     distance:  10,
   },
 };
