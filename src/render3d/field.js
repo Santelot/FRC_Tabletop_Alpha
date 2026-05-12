@@ -43,10 +43,10 @@ export function buildHexGrid({ visible = true } = {}) {
 
     // Color by zone
     let color = 0x666666;
-    let opacity = 0.25;
+    let opacity = 0.6;
     if (isHub) { color = 0xffb627; opacity = 0.7; }
-    else if (isRedZone) { color = 0xe63946; opacity = 0.45; }
-    else if (isBlueZone) { color = 0x1e88e5; opacity = 0.45; }
+    else if (isRedZone) { color = 0xe63946; opacity = 0.6; }
+    else if (isBlueZone) { color = 0x1e88e5; opacity = 0.6; }
 
     const geo = new THREE.BufferGeometry().setFromPoints(localPts);
     const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });

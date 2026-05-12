@@ -209,12 +209,12 @@ export const MODEL_TRANSFORMS = {
 
 export const CAMERA_PRESETS = {
   broadcast: {
-    position: [0, 18, 22],
+    position: [0, 24, 40], //[0, 18, 22]
     lookAt:   [0, 0, 0],
     fov:      45,
   },
   topdown: {
-    position: [0, 32, 0.01],
+    position: [0, 45, 0.01],
     lookAt:   [0, 0, 0],
     fov:      45,
   },
@@ -232,27 +232,27 @@ export const CAMERA_PRESETS = {
 export const LIGHTING = {
   ambient: {
     color:     0xffffff,
-    intensity: 0.45,
+    intensity: 0.8, // 0.45
   },
   hemisphere: {
     skyColor:    0xddeeff,
     groundColor: 0x445566,
-    intensity:   0.4,
+    intensity:   0.6, // 0.4
   },
   keyLight: {
     color:     0xffffff,
-    intensity: 1.5,
+    intensity: 2, // 1.5
     position:  [10, 18, 8],
     castShadow: true,
   },
   fillLight: {
     color:     0xffe9cc,
-    intensity: 0.45,
+    intensity: 0.8, // 0.45
     position:  [-12, 8, -6],
   },
   hubGlow: {
     color:     0xffb627,
-    intensity: 1.2,
+    intensity: 2, // 1.2
     position:  [0, 4, 0],
     distance:  10,
   },

@@ -269,11 +269,11 @@ export async function showAimCrosshair(parentGroup) {
  */
 export async function animateShotBall(parentGroup, fromXZ, hit) {
   const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
-  const HUB_TOP_Y = 1.2;
-  const ballGeo = new THREE.SphereGeometry(0.22, 16, 16);
+  const HUB_TOP_Y = 9;
+  const ballGeo = new THREE.SphereGeometry(0.55, 16, 16);
   const ballMat = new THREE.MeshStandardMaterial({
-    color: 0xffc23a,
-    emissive: 0xffc23a,
+    color: 0xd1ff1a,
+    emissive: 0xd1ff1a,
     emissiveIntensity: 0.4,
     metalness: 0.1,
     roughness: 0.4,
