@@ -60,22 +60,41 @@ export function wireLogToggle() {
   }
 }
 
-/**
- * Show a centered banner ("AUTON", "3", "GO!", etc.) for a duration in ms.
- * variant: 'big' (default) | 'small'
- */
+// ============================================================
+//  Banner — countdown / phase callouts
+// ============================================================
+//  Tracks the active hide-timer so a new banner cancels the previous
+//  one's auto-hide. Without this, banners shown back-to-back (countdown)
+//  flicker because the previous setTimeout fires while the new banner
+//  is up, briefly removing is-active.
+
+let bannerHideTimer = null;
+
 export function showBanner(text, variant = 'big', duration = 700) {
   const b = bannerEl();
   if (!b) return;
+
+  // Cancel any pending hide from a previous banner
+  if (bannerHideTimer) {
+    clearTimeout(bannerHideTimer);
+    bannerHideTimer = null;
+  }
+
   const small = variant === 'small' ? 'banner__text--small' : '';
+  // Replace innerHTML — the new __text element gets a fresh bannerPop animation
   b.innerHTML = `<div class="banner__text ${small}">${text}</div>`;
+  // Remove and re-add is-active to reset opacity transition cleanly
+  b.classList.remove('is-active');
+  // Force a reflow so the class change registers before re-adding
+  void b.offsetWidth;
   b.classList.add('is-active');
-  setTimeout(() => b.classList.remove('is-active'), duration);
+
+  bannerHideTimer = setTimeout(() => {
+    b.classList.remove('is-active');
+    bannerHideTimer = null;
+  }, duration);
 }
 
-/**
- * Flash the entire screen briefly with the alliance color (used on score).
- */
 export function flashScreen(alliance) {
   const f = flashEl();
   if (!f) return;

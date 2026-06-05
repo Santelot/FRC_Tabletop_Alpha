@@ -1,37 +1,60 @@
 // ============================================================
 //  FIELD — hex grid visualization + field/hub model loading
 // ============================================================
+//  Hex grid uses Line2 (screen-space thick lines) so strokeWidth
+//  works reliably across platforms. Style is driven by HEX_FIELD_STYLE
+//  in style.js — tweak there for thickness, color, glow, hex size, etc.
+//
+//  Note: hex VISUAL size (hexRadiusMul) is independent of grid spacing
+//  (HEX_SIZE in config.js). Change hexRadiusMul to grow/shrink the
+//  outlines without affecting where bots and pieces are placed.
+// ============================================================
 
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+
 import { loadModel } from './loader.js';
 import { HEX_SIZE, ACTIVE_CHALLENGE, CHALLENGES } from '../config.js';
+import { HEX_FIELD_STYLE } from '../style.js';
 import {
   allHexes, hexCenter, HUB_HEXES, HUB_KEYS, hexKey, ROW_COUNTS,
 } from '../sim/hex.js';
 
+// We collect all LineMaterial instances so they can be resolution-updated
+// when the canvas resizes (Line2 needs to know the screen size).
+const lineMaterials = [];
+
+export function getFieldLineMaterials() {
+  return lineMaterials;
+}
+
 /**
- * Procedurally generate the hex grid as line outlines on the ground plane.
- * (We keep this even when loading a field model, so coordinate alignment is
- *  visible during development. Set visible=false to hide once tuned.)
+ * Procedurally generate the hex grid as Line2 thick outlines on the
+ * ground plane. Style driven by HEX_FIELD_STYLE in style.js.
  */
 export function buildHexGrid({ visible = true } = {}) {
   const group = new THREE.Group();
   group.name = 'hex-grid';
   group.visible = visible;
 
-  const hexes = allHexes();
+  const style = HEX_FIELD_STYLE;
+  // Outline radius — independent of HEX_SIZE (grid spacing).
+  const radius = HEX_SIZE * (style.hexRadiusMul ?? 0.5);
 
-  // Pre-compute pointy-top hex outline (in local space)
-  const localPts = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI / 3) * i + Math.PI / 6;
-    localPts.push(new THREE.Vector3(
-      Math.cos(a) * HEX_SIZE * 0.95,
+  // Pre-compute pointy-top hex outline as a flat array (Line2 wants flat positions)
+  const localPosArray = [];
+  for (let i = 0; i <= 6; i++) {
+    const a = (Math.PI / 3) * (i % 6) + Math.PI / 6;
+    localPosArray.push(
+      Math.cos(a) * radius,
       0,
-      Math.sin(a) * HEX_SIZE * 0.95,
-    ));
+      Math.sin(a) * radius,
+    );
   }
-  localPts.push(localPts[0].clone());  // close the loop
+
+  const hexes = allHexes();
 
   hexes.forEach(h => {
     const { x, z } = hexCenter(h.col, h.row);
@@ -41,29 +64,64 @@ export function buildHexGrid({ visible = true } = {}) {
     const isRedZone = h.col <= 1;
     const isBlueZone = h.col >= rc - 2;
 
-    // Color by zone
-    let color = 0x666666;
-    let opacity = 0.6;
-    if (isHub) { color = 0xffb627; opacity = 0.7; }
-    else if (isRedZone) { color = 0xe63946; opacity = 0.6; }
-    else if (isBlueZone) { color = 0x1e88e5; opacity = 0.6; }
+    // Pick zone style
+    let zoneStyle;
+    if (isHub)            zoneStyle = style.zones.hub;
+    else if (isRedZone)   zoneStyle = style.zones.redZone;
+    else if (isBlueZone)  zoneStyle = style.zones.blueZone;
+    else                  zoneStyle = style.zones.neutral;
 
-    const geo = new THREE.BufferGeometry().setFromPoints(localPts);
-    const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
-    const line = new THREE.LineLoop(geo, mat);
-    line.position.set(x, 0.005, z);  // tiny lift to avoid z-fighting with ground
+    // ---- Underglow line (drawn first, below) ----
+    if (style.glow.enabled) {
+      const glowGeo = new LineGeometry();
+      glowGeo.setPositions(localPosArray);
+      const glowMat = new LineMaterial({
+        color:       zoneStyle.color,
+        linewidth:   style.glow.width,
+        transparent: true,
+        opacity:     style.glow.opacity,
+        depthTest:   true,
+        depthWrite:  false,
+      });
+      glowMat.resolution.set(window.innerWidth, window.innerHeight);
+      const glowLine = new Line2(glowGeo, glowMat);
+      glowLine.position.set(x, style.yLift + style.glow.yOffset, z);
+      glowLine.computeLineDistances();
+      group.add(glowLine);
+      lineMaterials.push(glowMat);
+    }
+
+    // ---- Main stroke ----
+    const geo = new LineGeometry();
+    geo.setPositions(localPosArray);
+    const mat = new LineMaterial({
+      color:       zoneStyle.color,
+      linewidth:   style.strokeWidth,
+      transparent: true,
+      opacity:     zoneStyle.opacity,
+      depthTest:   true,
+      depthWrite:  false,
+    });
+    mat.resolution.set(window.innerWidth, window.innerHeight);
+    const line = new Line2(geo, mat);
+    line.position.set(x, style.yLift, z);
+    line.computeLineDistances();
     group.add(line);
+    lineMaterials.push(mat);
 
-    // Hub hex fill — a translucent gold disc on each of the 7 hub hexes
-    if (isHub) {
-      const fillGeo = new THREE.CircleGeometry(HEX_SIZE * 0.46, 6);
+    // ---- Hub hex translucent fill ----
+    if (isHub && style.hubHexFill.enabled) {
+      const fillGeo = new THREE.CircleGeometry(HEX_SIZE * style.hubHexFill.radiusMul, 6);
       const fillMat = new THREE.MeshBasicMaterial({
-        color: 0xffb627, transparent: true, opacity: 0.18, side: THREE.DoubleSide,
+        color:       style.hubHexFill.color,
+        transparent: true,
+        opacity:     style.hubHexFill.opacity,
+        side:        THREE.DoubleSide,
       });
       const fill = new THREE.Mesh(fillGeo, fillMat);
       fill.rotation.x = -Math.PI / 2;
-      fill.rotation.z = Math.PI / 2;  // align flat-side to +X
-      fill.position.set(x, 0.01, z);
+      fill.rotation.z = Math.PI / 2;
+      fill.position.set(x, style.yLift + 0.005, z);
       group.add(fill);
     }
   });

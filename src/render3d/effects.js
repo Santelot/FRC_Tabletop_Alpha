@@ -1,16 +1,11 @@
 // ============================================================
-//  EFFECTS — particles, popups, hub pulse, auras, disruptor streak
-// ============================================================
-//  All effects mount themselves into a parent group passed in. They
-//  manage their own lifecycle (auto-remove when done).
-//
-//  Animations use raf-driven tweens — we don't own the render loop,
-//  so each effect schedules frame updates via requestAnimationFrame.
+//  EFFECTS — particles, popups, hub pulse, auras, disruptor, rotation
 // ============================================================
 
 import * as THREE from 'three';
 import { hexCenter, HUB_CENTER } from '../sim/hex.js';
 import { HEX_SIZE } from '../config.js';
+import { TIMING } from '../style.js';
 
 // ============================================================
 //  Tween utility
@@ -19,10 +14,6 @@ import { HEX_SIZE } from '../config.js';
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 const easeInOutQuad = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
-/**
- * Run an rAF tween. `onUpdate(eased, raw)` is called every frame.
- * Returns a Promise resolved when complete.
- */
 function tween(durationMs, onUpdate, easing = easeOutCubic) {
   return new Promise(resolve => {
     const start = performance.now();
@@ -39,6 +30,50 @@ function tween(durationMs, onUpdate, easing = easeOutCubic) {
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // ============================================================
+//  ROTATION — turn a bot to face a world target
+// ============================================================
+//  Bot models face +X by default. Their rotation.y = 0 means facing +X.
+//  rotation.y = π means facing -X.
+//
+//  This animation uses shortest-path angular interpolation so a bot
+//  doesn't take the long way around (e.g. 350° instead of -10°).
+
+/**
+ * Rotate a bot to face the given world XZ position.
+ * Uses shortest-path angular interpolation, with duration scaled by
+ * the size of the turn.
+ */
+export async function turnBotTo(botMesh, targetXZ) {
+  const dx = targetXZ.x - botMesh.position.x;
+  const dz = targetXZ.z - botMesh.position.z;
+  // atan2(z,x): angle in XZ plane. But the bot's rotation.y around +Y is
+  // measured counter-clockwise from +X axis. Three.js uses right-handed,
+  // so rotation.y positive turns from +X toward -Z. Our XZ plane has +Z
+  // going "backward". We want the bot to face the dx/dz direction.
+  // The angle that puts +X axis pointing toward (dx,dz) is atan2(-dz, dx).
+  const targetAngle = Math.atan2(-dz, dx);
+
+  const fromAngle = botMesh.rotation.y;
+  // Shortest delta in (-π, π]
+  let delta = targetAngle - fromAngle;
+  while (delta > Math.PI)  delta -= Math.PI * 2;
+  while (delta < -Math.PI) delta += Math.PI * 2;
+
+  // Skip if already facing close enough
+  if (Math.abs(delta) < 0.05) {
+    botMesh.rotation.y = targetAngle;
+    return;
+  }
+
+  const duration = TIMING.rotationBaseMs + Math.abs(delta) * TIMING.rotationPerRadian;
+
+  await tween(duration, eased => {
+    botMesh.rotation.y = fromAngle + delta * eased;
+  });
+  botMesh.rotation.y = targetAngle;
+}
+
+// ============================================================
 //  Hub pulse — pulses the hub's emissive intensity on a hit
 // ============================================================
 
@@ -48,14 +83,13 @@ export function pulseHub(hubGlowLight) {
   hubGlowLight.userData.baseIntensity = baseIntensity;
 
   tween(700, (eased, t) => {
-    // Quick spike then decay
     const spike = t < 0.2 ? t / 0.2 : (1 - t) / 0.8;
     hubGlowLight.intensity = baseIntensity + spike * 4.0;
   }, x => x);
 }
 
 // ============================================================
-//  Dust puffs — small white particles at a bot's wheels on movement
+//  Dust puffs
 // ============================================================
 
 export function spawnDust(parentGroup, worldPos) {
@@ -86,7 +120,7 @@ export function spawnDust(parentGroup, worldPos) {
 }
 
 // ============================================================
-//  Confetti — colorful spinning planes that fall after a score
+//  Confetti
 // ============================================================
 
 export function confettiBurst(parentGroup, worldPos, alliance) {
@@ -120,10 +154,9 @@ export function confettiBurst(parentGroup, worldPos, alliance) {
     const startZ = m.position.z;
 
     tween(1200, (eased, t) => {
-      // Ballistic trajectory
       m.position.x = startX + vx * t * 0.6;
       m.position.z = startZ + vz * t * 0.6;
-      m.position.y = startY + vy * t - 4 * t * t;  // gravity
+      m.position.y = startY + vy * t - 4 * t * t;
       m.rotation.x += spinX * 0.016;
       m.rotation.y += spinY * 0.016;
       mat.opacity = t < 0.7 ? 1 : (1 - t) / 0.3;
@@ -136,7 +169,7 @@ export function confettiBurst(parentGroup, worldPos, alliance) {
 }
 
 // ============================================================
-//  Defensive aura — translucent disc on the ground around the bot
+//  Defensive aura
 // ============================================================
 
 export function spawnDefensiveAura(parentGroup, worldPos, blocks) {
@@ -158,12 +191,11 @@ export function spawnDefensiveAura(parentGroup, worldPos, blocks) {
     m.scale.setScalar(0.3 + eased * 0.7);
     mat.opacity = eased * 0.55;
   });
-  // Stays on screen for the rest of the auton — caller can dispose later
   return m;
 }
 
 // ============================================================
-//  Disruptor streak — line from disruptor to target with violet glow
+//  Disruptor streak
 // ============================================================
 
 export function fireDisruptorStreak(parentGroup, fromXZ, toXZ) {
@@ -180,13 +212,9 @@ export function fireDisruptorStreak(parentGroup, fromXZ, toXZ) {
   parentGroup.add(line);
 
   tween(1700, (eased, t) => {
-    if (t < 0.18) {
-      mat.opacity = (t / 0.18) * 1.0;
-    } else if (t < 0.6) {
-      mat.opacity = 1.0;
-    } else {
-      mat.opacity = (1 - t) / 0.4;
-    }
+    if (t < 0.18)      mat.opacity = (t / 0.18) * 1.0;
+    else if (t < 0.6)  mat.opacity = 1.0;
+    else               mat.opacity = (1 - t) / 0.4;
   }, x => x).then(() => {
     parentGroup.remove(line);
     geo.dispose();
@@ -194,10 +222,6 @@ export function fireDisruptorStreak(parentGroup, fromXZ, toXZ) {
   });
 }
 
-/**
- * Persistent violet ring around a disrupted bot. Returns the mesh so the
- * caller can dispose it when the auton ends.
- */
 export function attachDisruptedRing(botGroup) {
   const geo = new THREE.RingGeometry(HEX_SIZE * 0.55, HEX_SIZE * 0.7, 32);
   const mat = new THREE.MeshBasicMaterial({
@@ -212,7 +236,6 @@ export function attachDisruptedRing(botGroup) {
   ring.userData.isDisruptedRing = true;
   botGroup.add(ring);
 
-  // Spin it
   let lastSpinTime = performance.now();
   function spin() {
     if (!ring.parent) return;
@@ -228,12 +251,9 @@ export function attachDisruptedRing(botGroup) {
 }
 
 // ============================================================
-//  Shot animations — aim crosshair and ball arc
+//  Shot animations
 // ============================================================
 
-/**
- * Draw a brief crosshair on the hub (a yellow ring that pops in/out).
- */
 export async function showAimCrosshair(parentGroup) {
   const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
   const geo = new THREE.RingGeometry(HEX_SIZE * 0.45, HEX_SIZE * 0.55, 32);
@@ -251,7 +271,7 @@ export async function showAimCrosshair(parentGroup) {
   await tween(550, (eased, t) => {
     if (t < 0.6) {
       mat.opacity = t / 0.6;
-      ring.scale.setScalar(2 - (t / 0.6) * 1.0);  // 2 → 1
+      ring.scale.setScalar(2 - (t / 0.6) * 1.0);
     } else {
       mat.opacity = 1 - (t - 0.6) / 0.4;
       ring.scale.setScalar(1 - ((t - 0.6) / 0.4) * 0.15);
@@ -263,14 +283,10 @@ export async function showAimCrosshair(parentGroup) {
   mat.dispose();
 }
 
-/**
- * Animate a ball arcing from `from` to the hub. If `hit` is true, the
- * ball sinks into the hub. Otherwise it deflects off the rim.
- */
 export async function animateShotBall(parentGroup, fromXZ, hit) {
   const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
   const HUB_TOP_Y = 9;
-  const ballGeo = new THREE.SphereGeometry(0.55, 16, 16);
+  const ballGeo = new THREE.SphereGeometry(0.45, 16, 16);
   const ballMat = new THREE.MeshStandardMaterial({
     color: 0xd1ff1a,
     emissive: 0xd1ff1a,
@@ -290,23 +306,19 @@ export async function animateShotBall(parentGroup, fromXZ, hit) {
       };
   const targetY = hit ? HUB_TOP_Y : HUB_TOP_Y + 0.2;
 
-  // Arc to target
   await tween(720, (eased, t) => {
     ball.position.x = fromXZ.x + (targetXZ.x - fromXZ.x) * eased;
     ball.position.z = fromXZ.z + (targetXZ.z - fromXZ.z) * eased;
-    // Parabolic arc: peak above midpoint
     const peak = 2.5;
     ball.position.y = 1.0 + (targetY - 1.0) * eased + peak * Math.sin(Math.PI * eased);
   });
 
   if (hit) {
-    // Sink into hub
     await tween(220, eased => {
       ball.scale.setScalar(1 - eased);
       ball.position.set(hubXZ.x, HUB_TOP_Y - eased * 0.5, hubXZ.z);
     });
   } else {
-    // Deflect away
     const deflectX = (Math.random() < 0.5 ? -1 : 1) * 1.5;
     const startX = ball.position.x;
     const startY = ball.position.y;
@@ -326,13 +338,10 @@ export async function animateShotBall(parentGroup, fromXZ, hit) {
 }
 
 // ============================================================
-//  Score popups — DOM elements anchored to a 3D world position
+//  Score popups
 // ============================================================
-//  We position absolute-positioned divs over the canvas using projected
-//  3D coords. Cheaper than CSS2DRenderer; avoids a second renderer.
 
 export function showScorePopup(canvasEl, camera, worldPos, text, alliance) {
-  // Project world → screen
   const v = new THREE.Vector3(worldPos.x, 1.5, worldPos.z);
   v.project(camera);
   const rect = canvasEl.getBoundingClientRect();
@@ -347,28 +356,25 @@ export function showScorePopup(canvasEl, camera, worldPos, text, alliance) {
   div.style.top = `${screenY}px`;
   canvasEl.parentElement.appendChild(div);
 
-  // Trigger animation, auto-remove
   requestAnimationFrame(() => div.classList.add('is-firing'));
   setTimeout(() => div.remove(), 1200);
 }
 
 // ============================================================
-//  Cargo pickup animation — the piece flies to the bot
+//  Cargo pickup animation
 // ============================================================
 
 export async function animatePickup(pieceMesh, botGroup) {
   if (!pieceMesh) return;
   const startPos = pieceMesh.position.clone();
   const targetPos = botGroup.position.clone();
-  targetPos.y = 1.4;  // arrives at top of bot
+  targetPos.y = 1.4;
 
   await tween(380, (eased, t) => {
     pieceMesh.position.lerpVectors(startPos, targetPos, eased);
-    // Arc upward
     pieceMesh.position.y += Math.sin(Math.PI * eased) * 0.8;
     pieceMesh.scale.setScalar(1 - eased * 0.6);
   });
 
-  // Remove from scene
   if (pieceMesh.parent) pieceMesh.parent.remove(pieceMesh);
 }

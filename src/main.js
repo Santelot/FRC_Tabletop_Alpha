@@ -1,28 +1,27 @@
 // ============================================================
-//  ENTRY POINT — Phase 2
+//  ENTRY POINT — Phase 3
 // ============================================================
 //  Wires the setup screen, the match screen, the Three.js scene,
 //  the model loading, and the auton orchestrator.
 //
-//  When RUN AUTON is pressed:
-//   1. Switch to match screen, load assets if not loaded.
-//   2. Build the game state from the form.
-//   3. Run the auton generator, which yields events.
-//   4. Each event maps to a Three.js animation (movement, particles, shots).
-//   5. Wait for each event's animation before proceeding.
+//  This phase adds:
+//   - Per-drivetrain rotation (Tank/WC turn before moving;
+//     all bots turn to face the hub before shooting)
+//   - Cargo indicator updates on each pickup/consumed event
+//   - Persistent bot ID labels projected from world coords
 // ============================================================
 
 import * as THREE from 'three';
 
 import { Scene } from './render3d/scene.js';
 import { buildHexGrid, loadFieldModel, loadHubModel } from './render3d/field.js';
-import { loadBots } from './render3d/bots.js';
+import { loadBots, updateCargoIndicator } from './render3d/bots.js';
 import { loadPieces } from './render3d/pieces.js';
 import {
   pulseHub, spawnDust, confettiBurst, spawnDefensiveAura,
   fireDisruptorStreak, attachDisruptedRing,
   showAimCrosshair, animateShotBall, animatePickup, showScorePopup,
-  sleep,
+  turnBotTo, sleep,
 } from './render3d/effects.js';
 
 import { buildSetupForm, readSetupState, showScreen } from './ui/setup.js';
@@ -33,8 +32,9 @@ import {
 
 import { buildGameState } from './sim/state.js';
 import { runAuton } from './sim/auton.js';
-import { hexCenter } from './sim/hex.js';
+import { hexCenter, HUB_CENTER } from './sim/hex.js';
 import { TICK_DURATION } from './config.js';
+import { TIMING, BOT_LABELS } from './style.js';
 
 // ---- DOM refs ----
 const canvas    = document.getElementById('three-canvas');
@@ -45,9 +45,11 @@ const btnBack   = document.getElementById('btn-back');
 // ---- State ----
 let scene = null;
 let currentBots = null;       // Map<botId, Object3D>
-let currentPieces = null;     // { pieces: [{id, pos, taken, mesh}], group }
-let effectsLayer = null;      // Group for transient effects (particles, streaks)
-let aurasLayer = null;        // Group for persistent auras (defensive set)
+let currentPieces = null;
+let effectsLayer = null;
+let aurasLayer = null;
+let labelMap = new Map();     // botId -> HTML element
+let labelTickerUnsub = null;
 let isRunning = false;
 
 // ---- Setup form + UI initialization ----
@@ -62,7 +64,6 @@ function ensureScene() {
   const grid = buildHexGrid({ visible: true });
   scene.scene.add(grid);
 
-  // Layers for runtime effects
   effectsLayer = new THREE.Group();
   effectsLayer.name = 'effects';
   scene.scene.add(effectsLayer);
@@ -88,9 +89,12 @@ async function loadMatchAssets(config) {
     currentPieces = null;
   }
 
-  // Clear previous effects (particles, auras)
+  // Clear effects + auras
   while (effectsLayer.children.length > 0) effectsLayer.remove(effectsLayer.children[0]);
   while (aurasLayer.children.length > 0) aurasLayer.remove(aurasLayer.children[0]);
+
+  // Clear bot labels
+  clearBotLabels();
 
   // Load field/hub once (cached after first load)
   if (!s.userData.fieldLoaded) {
@@ -109,10 +113,72 @@ async function loadMatchAssets(config) {
 
   currentBots = bots;
   currentPieces = pieces;
+
+  // Build bot labels (HTML divs over the canvas)
+  if (BOT_LABELS.enabled) buildBotLabels(bots);
 }
 
 // ============================================================
-//  EVENT HANDLER — translates auton events into 3D animations
+//  BOT LABELS — HTML divs anchored to projected world coords
+// ============================================================
+
+function buildBotLabels(bots) {
+  const container = canvas.parentElement;
+  bots.forEach((mesh, id) => {
+    const div = document.createElement('div');
+    div.className = `bot-label bot-label--${mesh.userData.alliance}`;
+    div.textContent = id;
+    container.appendChild(div);
+    labelMap.set(id, div);
+  });
+
+  // Per-frame projection update
+  if (labelTickerUnsub) labelTickerUnsub();
+  labelTickerUnsub = scene.onTick(() => {
+    updateLabelPositions();
+  });
+}
+
+function clearBotLabels() {
+  if (labelTickerUnsub) {
+    labelTickerUnsub();
+    labelTickerUnsub = null;
+  }
+  labelMap.forEach(el => el.remove());
+  labelMap.clear();
+}
+
+const _labelV = new THREE.Vector3();
+function updateLabelPositions() {
+  if (!scene || labelMap.size === 0) return;
+  const rect = canvas.getBoundingClientRect();
+  const halfW = rect.width / 2;
+  const halfH = rect.height / 2;
+
+  labelMap.forEach((el, id) => {
+    const mesh = currentBots && currentBots.get(id);
+    if (!mesh) {
+      el.style.display = 'none';
+      return;
+    }
+    _labelV.set(mesh.position.x, BOT_LABELS.yOffset, mesh.position.z);
+    _labelV.project(scene.camera);
+
+    // Hide if behind camera (z > 1)
+    if (_labelV.z > 1) {
+      el.style.display = 'none';
+      return;
+    }
+
+    const screenX = _labelV.x * halfW + halfW;
+    const screenY = -_labelV.y * halfH + halfH;
+    el.style.transform = `translate(-50%, -100%) translate(${screenX}px, ${screenY}px)`;
+    el.style.display = 'block';
+  });
+}
+
+// ============================================================
+//  EVENT HANDLER
 // ============================================================
 
 async function handleEvent(event) {
@@ -135,8 +201,10 @@ async function handleEvent(event) {
       return;
 
     case 'tick_move': {
-      // Animate every bot moving from its current world pos to the next hex.
-      // Spawn dust at each moving bot's start position.
+      // Per-drivetrain handling:
+      //   Tank / West Coast: rotate-then-translate (sequential)
+      //   Mecanum / Swerve : translate only (omnidirectional)
+      // Bots that don't move at all skip everything.
       const promises = [];
       for (const [id, nextPos] of Object.entries(event.moves)) {
         const botMesh = currentBots.get(id);
@@ -146,8 +214,22 @@ async function handleEvent(event) {
         if (Math.abs(fromXZ.x - toXZ.x) < 0.001 && Math.abs(fromXZ.z - toXZ.z) < 0.001) {
           continue;  // didn't move
         }
-        spawnDust(effectsLayer, { x: fromXZ.x, z: fromXZ.z });
-        promises.push(animateBotMove(botMesh, fromXZ, toXZ, TICK_DURATION));
+
+        const drivetrain = botMesh.userData.drivetrain;
+        const isOriented = drivetrain === 'tank' || drivetrain === 'west_coast';
+
+        if (isOriented && TIMING.rotateBeforeMove) {
+          // Tank/WC: rotate then move sequentially
+          promises.push((async () => {
+            await turnBotTo(botMesh, toXZ);
+            spawnDust(effectsLayer, fromXZ);
+            await animateBotMove(botMesh, fromXZ, toXZ, TIMING.tickDuration);
+          })());
+        } else {
+          // Mecanum/Swerve: just translate (no facing change)
+          spawnDust(effectsLayer, fromXZ);
+          promises.push(animateBotMove(botMesh, fromXZ, toXZ, TIMING.tickDuration));
+        }
       }
       await Promise.all(promises);
       return;
@@ -162,8 +244,13 @@ async function handleEvent(event) {
       return;
     }
 
+    case 'cargo_update': {
+      const bot = currentBots.get(event.botId);
+      if (bot) updateCargoIndicator(bot, event.held, event.max);
+      return;
+    }
+
     case 'park_score': {
-      // Subtle effect: small confetti burst + score popup at the bot's hex
       confettiBurst(effectsLayer, { x: event.hexPos.x, y: 0.5, z: event.hexPos.z }, event.alliance);
       showScorePopup(canvas, scene.camera, event.hexPos, `+${event.points}`, event.alliance);
       return;
@@ -175,9 +262,16 @@ async function handleEvent(event) {
 
     case 'disruptor_fire': {
       fireDisruptorStreak(effectsLayer, event.sourcePos, event.targetPos);
-      // Persistent ring around the disrupted bot
       const targetMesh = currentBots.get(event.targetId);
       if (targetMesh) attachDisruptedRing(targetMesh);
+      return;
+    }
+
+    case 'face_hub': {
+      const bot = currentBots.get(event.botId);
+      if (!bot) return;
+      const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
+      await turnBotTo(bot, hubXZ);
       return;
     }
 
@@ -186,18 +280,17 @@ async function handleEvent(event) {
       return;
 
     case 'cargo_consumed':
-      // No 3D effect for now — would be nice to update a held-cargo indicator
-      // attached to the bot model in a future polish pass.
+      // visual update happens via cargo_update event right after
       return;
 
     case 'shot_resolve': {
       const fromXZ = event.hexPos;
       await animateShotBall(effectsLayer, fromXZ, event.hit);
       if (event.hit) {
-        // Hit drama: hub pulse, screen flash, confetti at the hub, score popup
         pulseHub(scene.hubGlow);
+        if (scene.flashHubHalo) scene.flashHubHalo();
         flashScreen(event.alliance);
-        const hubXZ = hexCenter(7, 4);
+        const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
         confettiBurst(effectsLayer, { x: hubXZ.x, y: 1.2, z: hubXZ.z }, event.alliance);
         showScorePopup(canvas, scene.camera, hubXZ, `+${event.points}`, event.alliance);
       }
@@ -235,7 +328,7 @@ function animateBotMove(botMesh, fromXZ, toXZ, durationMs) {
 }
 
 // ============================================================
-//  RUN AUTON button
+//  Buttons
 // ============================================================
 
 btnRun.addEventListener('click', async () => {
@@ -252,8 +345,6 @@ btnRun.addEventListener('click', async () => {
 
   try {
     await loadMatchAssets(config);
-
-    // Build the game state and run the auton generator
     const state = buildGameState(config);
 
     for await (const event of runAuton(state)) {
@@ -288,7 +379,7 @@ document.querySelectorAll('.view-btn').forEach(btn => {
   });
 });
 
-// ---- Number key shortcuts (dev aid) ----
+// ---- Number key shortcuts ----
 window.addEventListener('keydown', (e) => {
   if (!scene) return;
   const map = { '1': 'topdown', '2': 'broadcast', '3': 'orbit' };
@@ -300,4 +391,4 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-console.log('FRC AUTON · 3D · v0.4 — Phase 2: full auton simulation wired.');
+console.log('FRC AUTON · 3D · v0.5 — Phase 3: rotation, labels, cargo indicators, hex glow.');
