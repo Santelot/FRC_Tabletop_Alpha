@@ -26,20 +26,52 @@ export const HUB_HEIGHT = 2.5;                  // visual hint for camera framin
 
 // ---- Game constants (ported from v0.2) ----
 export const DRIVETRAINS = {
-  mecanum:    { label: 'Mecanum',  initiative: 3, blocks: 1, reach: 3 },
-  tank:       { label: 'Tank',     initiative: 4, blocks: 3, reach: 3 },
+  mecanum:    { label: 'Mecanum',  initiative: 4, blocks: 1, reach: 3 },
+  tank:       { label: 'Tank',     initiative: 3, blocks: 3, reach: 3 },
   west_coast: { label: 'WC',       initiative: 2, blocks: 2, reach: 4 },
   swerve:     { label: 'Swerve',   initiative: 1, blocks: 2, reach: 5 },
 };
 
 export const SCORING_ACCURACY = { 1: 50, 2: 75, 3: 90 };
+export const STEADIED_ACCURACY = { 1: 75, 2: 90, 3: 95 }; // Quick Score: one scoring band sharper
+export const DISRUPT_TIER_DROP = 2;                        // Disruptor knocks target down N tiers (below L1 = jammed)
 
 export const SCRIPTS = {
-  cross_park:    { label: 'Cross & Park',  desc: 'Drive forward and park. +2 TAXI.' },
-  quick_score:   { label: 'Quick Score',   desc: 'Move to firing line. Take 1 shot.' },
-  triple_threat: { label: 'Triple Threat', desc: 'Pickup cargo en route. Shoot up to 2 (cap).' },
-  defensive_set: { label: 'Defensive Set', desc: 'Cross sides. Establish a blocking aura.' },
-  disruptor:     { label: 'Disruptor',     desc: 'Cross field. Force closest opposing shooter to roll twice — worse taken.' },
+  cross_park: {
+    label:  'Cross & Park',
+    desc:   'Drive forward and park. +2 TAXI.',
+    detail: 'Roll across the line and stop. No cargo, no risk — just the taxi bonus.',
+    scores: '+2 guaranteed',
+    tip:    'The safe floor. Great on a low scorer (L1) or when you just need points in the bank.',
+  },
+  quick_score: {
+    label:  'Quick Score',
+    desc:   'Set up and fire the preload — steadied aim.',
+    detail: 'Skip the pickup detour and take one clean, set shot at your preload. Steadied aim fires as if one scoring tier sharper (L1\u219275%, L2\u219290%, L3\u219295%).',
+    scores: '+4 on a hit  ·  steadied: L1 75% / L2 90% / L3 95%',
+    tip:    'The reliable single. Best on LOW-intake bots that can only carry one cargo — it out-scores a one-shot Triple Threat.',
+  },
+  triple_threat: {
+    label:  'Triple Threat',
+    desc:   'Grab a cargo, then fire up to 2 at base accuracy.',
+    detail: 'Pick up a field cargo on the way in and fire up to two shots at base accuracy. The second shot needs L2+ intake to carry it — at L1 intake this is just one base shot.',
+    scores: 'up to +8  ·  two hits at base 50 / 75 / 90%',
+    tip:    'The ceiling play, and only worth it at L2+ intake. At L1 intake, take Quick Score instead.',
+  },
+  defensive_set: {
+    label:  'Defensive Set',
+    desc:   'Cross over and pin adjacent hexes (+1 in auto).',
+    detail: 'Cross to the enemy side and drop blocking pins on adjacent hexes — opposing robots can\u2019t pass through them for the rounds that follow. Auto grants one extra pin.',
+    scores: '0 direct  ·  walls off Tank 4 / Swerve\u00b7WC 3 / Mecanum 2 hexes',
+    tip:    'Now genuinely worth a slot. Put a Tank here to wall off four lanes and choke their whole offense.',
+  },
+  disruptor: {
+    label:  'Disruptor',
+    desc:   'Cross and jam the enemy\u2019s best shooter.',
+    detail: 'Race across and jam the opposing alliance\u2019s best shooter: its auto shot is knocked down two scoring tiers. An L3 ace drops to a coin-flip; L1\u2013L2 shooters are jammed cold (no shot).',
+    scores: '0 direct  ·  guts their ace (L3 90%\u219250%) or jams it outright',
+    tip:    'Sacrifice your scoring to neutralize their biggest threat. Swings the margin as hard as scoring yourself.',
+  },
 };
 
 export const SHOT_POINTS = 4;
@@ -93,7 +125,13 @@ export const CHALLENGES = {
  * Switch this to test a different challenge once its models are in place.
  * Phase 1+2 only need rapid_react; charged_up keys are stubbed for later.
  */
-export const ACTIVE_CHALLENGE = 'rapid_react';
+export let ACTIVE_CHALLENGE = 'rapid_react';
+
+/** Switch the active challenge at runtime (the setup menu calls this). */
+export function setActiveChallenge(id) {
+  if (CHALLENGES[id]) ACTIVE_CHALLENGE = id;
+  return ACTIVE_CHALLENGE;
+}
 
 // ============================================================
 //  MODEL PATHS
@@ -125,10 +163,14 @@ export const MODEL_PATHS = {
   hub_rapidreact:    `${B}models/hub-rapidreact.glb`,
   cargo_rapidreact:  `${B}models/cargo-rapidreact.glb`,
 
-  // Charged Up assets (stubs for later)
-  field_chargedup:   `${B}models/field-chargedup.glb`,
-  hub_chargedup:     `${B}models/hub-chargedup.glb`,
-  cargo_chargedup:   `${B}models/cargo-chargedup.glb`,
+  // Charged Up assets
+  field_chargedup:              `${B}models/field-chargedup.glb`,
+  chargestation_red_chargedup:  `${B}models/chargestation-chargedup.glb`,
+  chargestation_blue_chargedup: `${B}models/chargestation-chargedup.glb`,
+  grid_red_chargedup:           `${B}models/grid_red_chargedup.glb`,
+  grid_blue_chargedup:          `${B}models/grid_blue_chargedup.glb`,
+  cone_chargedup:               `${B}models/cone-chargedup.glb`,
+  cube_chargedup:               `${B}models/cube-chargedup.glb`,
 
   // Bots — RED · SHOOTER (Rapid React)
   bot_tank_red_shooter:        `${B}models/bot-tank-red-shooter.glb`,
@@ -174,9 +216,18 @@ export const MODEL_TRANSFORMS = {
   field_rapidreact:  { ...IDENTITY },
   hub_rapidreact:    { position: [1.8, 0, 1.5], rotation: [0, 0, 0], scale: 102.0 },
   cargo_rapidreact:  { ...IDENTITY },
-  field_chargedup:   { ...IDENTITY },
-  hub_chargedup:     { ...IDENTITY },
-  cargo_chargedup:   { ...IDENTITY },
+  // ---- Charged Up structures & pieces — TUNE position / rotation / scale here ----
+  //   position: [x, y, z] world-unit offset   rotation: [x, y, z] degrees   scale: number
+  //   Grids and charge stations are dropped at an anchor hex, then nudged by these
+  //   offsets (same idea as the bots' [.3,0,0]). Cones/cubes sit at their hexes;
+  //   their transform applies to every copy (use it mainly to set piece scale).
+  field_chargedup:              { ...IDENTITY },
+  chargestation_red_chargedup:  { position: [-4.5, 0, 13.4], rotation: [0, 90, 0], scale: 102.0 },
+  chargestation_blue_chargedup: { position: [-4.5, 0, 13.4], rotation: [0, 90, 0], scale: 102.0 },
+  grid_red_chargedup:           { position: [-25.8, 0, -2.6], rotation: [0, 90, 0], scale: 102.0 },
+  grid_blue_chargedup:          { position: [-21.4, 0, -8], rotation: [0, 90, 0], scale: 102.0 },
+  cone_chargedup:               { position: [5, 0, 8.7], rotation: [0, 90, 0], scale: 102.0 },
+  cube_chargedup:               { position: [3, 0, 8.7], rotation: [0, 90, 0], scale: 102.0 },
 
   // ---- Bots: RED · SHOOTER ----
   bot_tank_red_shooter:        { ...IDENTITY },

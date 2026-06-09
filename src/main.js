@@ -14,13 +14,15 @@
 import * as THREE from 'three';
 
 import { Scene } from './render3d/scene.js';
-import { buildHexGrid, loadFieldModel, loadHubModel } from './render3d/field.js';
+import { buildHexGrid, loadFieldModel, loadChallengeStructures } from './render3d/field.js';
 import { loadBots, updateCargoIndicator } from './render3d/bots.js';
 import { loadPieces } from './render3d/pieces.js';
+import { loadModel } from './render3d/loader.js';
 import {
-  pulseHub, spawnDust, confettiBurst, spawnDefensiveAura,
+  pulseHub, spawnDust, confettiBurst, spawnDefensiveAura, spawnBlockPins,
   fireDisruptorStreak, attachDisruptedRing,
   showAimCrosshair, animateShotBall, animatePickup, showScorePopup,
+  spawnPlacedPiece, spawnChargeDock, animateDockRaise,
   turnBotTo, sleep,
 } from './render3d/effects.js';
 
@@ -29,18 +31,23 @@ import {
   setPhase, setScore, clearScores, clearLog, writeLog, wireLogToggle,
   showBanner, flashScreen,
 } from './ui/hud.js';
+import { deployTeleop, resetTeleop } from './ui/teleop.js';
 
 import { buildGameState } from './sim/state.js';
 import { runAuton } from './sim/auton.js';
 import { hexCenter, HUB_CENTER } from './sim/hex.js';
-import { TICK_DURATION } from './config.js';
-import { TIMING, BOT_LABELS } from './style.js';
+import { TICK_DURATION, ACTIVE_CHALLENGE } from './config.js';
+import { TIMING, BOT_LABELS, AUDIO, CHARGE_DOCK, GRID_PLACEMENT } from './style.js';
+import { play, initAudio, toggleMuted, isMuted } from './audio.js';
 
 // ---- DOM refs ----
 const canvas    = document.getElementById('three-canvas');
 const btnRun    = document.getElementById('btn-run');
 const btnReset  = document.getElementById('btn-reset');
 const btnBack   = document.getElementById('btn-back');
+const btnBeginTeleop = document.getElementById('btn-begin-teleop');
+const matchScreen    = document.getElementById('screen-match');
+const matchHud       = document.querySelector('.match-hud');
 
 // ---- State ----
 let scene = null;
@@ -51,6 +58,8 @@ let aurasLayer = null;
 let labelMap = new Map();     // botId -> HTML element
 let labelTickerUnsub = null;
 let isRunning = false;
+let lastScores = { red: 0, blue: 0 };   // carried into teleop
+let currentConfig = null;               // bot config for the current match
 
 // ---- Setup form + UI initialization ----
 buildSetupForm();
@@ -96,14 +105,28 @@ async function loadMatchAssets(config) {
   // Clear bot labels
   clearBotLabels();
 
-  // Load field/hub once (cached after first load)
+  // If the challenge changed since the last build, drop the cached field,
+  // structures, and hex grid so they rebuild for the new game.
+  if (s.userData.builtChallenge && s.userData.builtChallenge !== ACTIVE_CHALLENGE) {
+    if (s.userData.field)      s.scene.remove(s.userData.field);
+    if (s.userData.structures) s.scene.remove(s.userData.structures);
+    if (s.userData.grid)       s.scene.remove(s.userData.grid);
+    s.userData.fieldLoaded = false;
+    const grid = buildHexGrid({ visible: true });
+    s.scene.add(grid);
+    s.userData.grid = grid;
+  }
+  s.userData.builtChallenge = ACTIVE_CHALLENGE;
+
+  // Load field + challenge structures once (cached after first load)
   if (!s.userData.fieldLoaded) {
-    const [field, hub] = await Promise.all([loadFieldModel(), loadHubModel()]);
+    const field = await loadFieldModel();
     s.scene.add(field);
-    s.scene.add(hub);
+    const structures = await loadChallengeStructures();
+    s.scene.add(structures);
     s.userData.fieldLoaded = true;
     s.userData.field = field;
-    s.userData.hub = hub;
+    s.userData.structures = structures;
   }
 
   // Bots and pieces — fresh every match
@@ -190,10 +213,13 @@ async function handleEvent(event) {
 
     case 'banner':
       showBanner(event.text, event.variant, event.duration);
+      if (event.text === '3' || event.text === '2' || event.text === '1') play('countdownBeep');
+      else if (event.text === 'GO!') play('countdownGo');
       return;
 
     case 'set_phase':
       setPhase(event.phase, event.sub, event.isLive);
+      if (event.phase === 'COMPLETE') play('final');
       return;
 
     case 'pause':
@@ -231,6 +257,7 @@ async function handleEvent(event) {
           promises.push(animateBotMove(botMesh, fromXZ, toXZ, TIMING.tickDuration));
         }
       }
+      if (promises.length > 0) play('move', { pitchJitter: AUDIO.movePitchJitter });
       await Promise.all(promises);
       return;
     }
@@ -239,6 +266,7 @@ async function handleEvent(event) {
       const piece = currentPieces.pieces.find(p => p.id === event.pieceId);
       const bot = currentBots.get(event.botId);
       if (piece && piece.mesh && bot) {
+        play('pickup');
         await animatePickup(piece.mesh, bot);
       }
       return;
@@ -251,16 +279,43 @@ async function handleEvent(event) {
     }
 
     case 'park_score': {
+      play('park');
       confettiBurst(effectsLayer, { x: event.hexPos.x, y: 0.5, z: event.hexPos.z }, event.alliance);
       showScorePopup(canvas, scene.camera, event.hexPos, `+${event.points}`, event.alliance);
       return;
     }
 
+    case 'place_piece': {
+      play('park');
+      const piece = await loadModel(event.modelKey);
+      const layer = (currentPieces && currentPieces.group) ? currentPieces.group : effectsLayer;
+      const tier = GRID_PLACEMENT[event.tier] || GRID_PLACEMENT.L1;
+      const into = event.alliance === 'red' ? -tier.dInto : tier.dInto;   // nudge toward the grid wall
+      const toXZ = { x: event.x + into, z: event.z };
+      const fromXZ = { x: event.fromX ?? event.x, z: event.fromZ ?? event.z };
+      await spawnPlacedPiece(layer, piece, toXZ, fromXZ, tier.dy);
+      confettiBurst(effectsLayer, { x: toXZ.x, y: tier.dy + 0.5, z: toXZ.z }, event.alliance);
+      showScorePopup(canvas, scene.camera, { x: toXZ.x, z: toXZ.z }, `+${event.points}`, event.alliance);
+      return;
+    }
+
+    case 'charge_dock': {
+      play('park');
+      const bot = currentBots.get(event.botId);
+      const xz = { x: event.x, z: event.z };
+      if (bot) await animateDockRaise(bot, xz, CHARGE_DOCK.raiseY, CHARGE_DOCK.climbMs, event.engaged);
+      spawnChargeDock(effectsLayer, { x: event.x, y: CHARGE_DOCK.raiseY, z: event.z }, event.engaged);
+      showScorePopup(canvas, scene.camera, { x: event.x, z: event.z }, `+${event.points}`, event.alliance);
+      return;
+    }
+
     case 'defensive_set':
       spawnDefensiveAura(aurasLayer, event.hexPos, event.blocks);
+      spawnBlockPins(aurasLayer, event.pinPositions, event.alliance);
       return;
 
     case 'disruptor_fire': {
+      play('disruptor');
       fireDisruptorStreak(effectsLayer, event.sourcePos, event.targetPos);
       const targetMesh = currentBots.get(event.targetId);
       if (targetMesh) attachDisruptedRing(targetMesh);
@@ -285,7 +340,9 @@ async function handleEvent(event) {
 
     case 'shot_resolve': {
       const fromXZ = event.hexPos;
+      play('shotWhoosh');
       await animateShotBall(effectsLayer, fromXZ, event.hit);
+      play(event.hit ? 'hit' : 'miss');
       if (event.hit) {
         pulseHub(scene.hubGlow);
         if (scene.flashHubHalo) scene.flashHubHalo();
@@ -299,6 +356,8 @@ async function handleEvent(event) {
 
     case 'score_update':
       setScore(event.alliance, event.total);
+      play('score');
+      lastScores[event.alliance] = event.total;
       return;
 
     default:
@@ -336,12 +395,20 @@ btnRun.addEventListener('click', async () => {
   isRunning = true;
   btnRun.disabled = true;
 
+  initAudio();  // create/resume the AudioContext within this user gesture
+
+  // Fresh match → tear down any previous teleop panel and restore the HUD.
+  resetTeleop();
+  if (btnBeginTeleop) btnBeginTeleop.classList.add('is-hidden');
+
   showScreen('match');
   clearScores();
   clearLog();
   setPhase('AUTON', 'LOADING', false);
 
   const config = readSetupState();
+  currentConfig = config;
+  lastScores = { red: 0, blue: 0 };
 
   try {
     await loadMatchAssets(config);
@@ -350,6 +417,8 @@ btnRun.addEventListener('click', async () => {
     for await (const event of runAuton(state)) {
       await handleEvent(event);
     }
+    // Auton finished cleanly → offer the teleop tracker.
+    if (btnBeginTeleop) btnBeginTeleop.classList.remove('is-hidden');
   } catch (err) {
     console.error('Auton failed:', err);
     writeLog(`ERROR: ${err.message}`, 'miss');
@@ -367,8 +436,25 @@ btnReset.addEventListener('click', () => {
 
 btnBack.addEventListener('click', () => {
   if (isRunning) return;
+  resetTeleop();
+  if (btnBeginTeleop) btnBeginTeleop.classList.add('is-hidden');
   showScreen('setup');
 });
+
+// ---- Begin Teleop → deploy the full-screen tracker ----
+if (btnBeginTeleop) {
+  btnBeginTeleop.addEventListener('click', () => {
+    initAudio();
+    btnBeginTeleop.classList.add('is-hidden');
+    deployTeleop({
+      screen:  matchScreen,
+      hud:     matchHud,            // relocated to the top of the tracker
+      config:  currentConfig,
+      scores:  lastScores,
+      onExit:  () => showScreen('setup'),
+    });
+  });
+}
 
 // ---- Camera preset toggle ----
 document.querySelectorAll('.view-btn').forEach(btn => {
@@ -391,4 +477,22 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-console.log('FRC AUTON · 3D · v0.5 — Phase 3: rotation, labels, cargo indicators, hex glow.');
+// ---- Sound mute toggle ----
+const btnMute = document.getElementById('btn-mute');
+function syncMuteButton() {
+  if (!btnMute) return;
+  const m = isMuted();
+  btnMute.textContent = m ? 'SOUND OFF' : 'SOUND ON';
+  btnMute.style.opacity = m ? '0.55' : '1';
+  btnMute.setAttribute('aria-pressed', String(!m));
+}
+if (btnMute) {
+  syncMuteButton();
+  btnMute.addEventListener('click', () => {
+    initAudio();      // ensure the context exists the first time they unmute
+    toggleMuted();
+    syncMuteButton();
+  });
+}
+
+console.log('FRC AUTON · 3D · v0.6 — synth match audio (mute toggle in top bar).');

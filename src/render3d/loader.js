@@ -192,6 +192,38 @@ function makePlaceholder(modelKey, opts = {}) {
       group.add(turret);
     }
 
+  // ---- Charged Up: charge station ----
+  } else if (modelKey.startsWith('chargestation_')) {
+    const geo = new THREE.CylinderGeometry(2.2, 2.4, 0.5, 6);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffb627, metalness: 0.3, roughness: 0.5, emissive: 0xffb627, emissiveIntensity: 0.12 });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.25; m.rotation.y = Math.PI / 6;
+    m.castShadow = true; m.receiveShadow = true;
+    group.add(m);
+
+  // ---- Charged Up: grid ----
+  } else if (modelKey.startsWith('grid_')) {
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x3a3d4a, metalness: 0.4, roughness: 0.5 });
+    for (let i = 0; i < 3; i++) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.25, 2.2 - i * 0.6, 0.25), frameMat);
+      post.position.set(-0.6, (2.2 - i * 0.6) / 2, (i - 1) * 1.6);
+      post.castShadow = true; group.add(post);
+    }
+
+  // ---- Charged Up: cone ----
+  } else if (modelKey.startsWith('cone_')) {
+    const geo = new THREE.ConeGeometry(0.5, 1.2, 16);
+    const mat = new THREE.MeshStandardMaterial({ color: 0xffd23f, roughness: 0.5, emissive: 0xffd23f, emissiveIntensity: 0.08 });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.6; m.castShadow = true; group.add(m);
+
+  // ---- Charged Up: cube ----
+  } else if (modelKey.startsWith('cube_')) {
+    const geo = new THREE.BoxGeometry(0.9, 0.9, 0.9);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x9b5cf6, roughness: 0.55, emissive: 0x9b5cf6, emissiveIntensity: 0.08 });
+    const m = new THREE.Mesh(geo, mat);
+    m.position.y = 0.45; m.castShadow = true; group.add(m);
+
   // ---- Unknown ----
   } else {
     const geo = new THREE.BoxGeometry(1, 1, 1);

@@ -10,7 +10,19 @@ import { hexCenter, START_POS } from '../sim/hex.js';
 import {
   BOT_IDS, ACTIVE_CHALLENGE, CHALLENGES, botModelKey,
 } from '../config.js';
+import { CHALLENGE_CARDS } from '../challenges.js';
 import { CARGO_INDICATORS } from '../style.js';
+
+/** Start hex for a bot id, read from the active challenge card (START_POS fallback). */
+function startHex(id) {
+  const starts = CHALLENGE_CARDS[ACTIVE_CHALLENGE]?.starts;
+  if (starts) {
+    const arr = id[0] === 'R' ? starts.red : starts.blue;
+    const coord = arr?.[Number(id[1]) - 1];
+    if (coord) return { col: coord[0], row: coord[1] };
+  }
+  return START_POS[id];
+}
 
 /**
  * Loads all six bots according to the given config.
@@ -32,15 +44,18 @@ export async function loadBots(config) {
     model.userData.drivetrain = cfg.drivetrain;
     model.userData.scoringType = scoringType;
 
-    // Attach cargo indicator dots if enabled
-    if (CARGO_INDICATORS.enabled) {
+    // Cargo indicator dots are a Rapid React (shooter) affordance. Placement
+    // challenges carry the real cone/cube instead, so skip the spheres there.
+    const card = CHALLENGE_CARDS[ACTIVE_CHALLENGE];
+    const isShooter = !card || card.scoringModel === 'shooter';
+    if (CARGO_INDICATORS.enabled && isShooter) {
       const indicator = buildCargoIndicator();
       model.add(indicator);
       model.userData.cargoIndicator = indicator;
     }
 
-    // Place at start hex
-    const start = START_POS[id];
+    // Place at start hex (from the active challenge card)
+    const start = startHex(id);
     const { x, z } = hexCenter(start.col, start.row);
     model.position.set(x, 0, z);
 

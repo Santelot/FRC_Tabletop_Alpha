@@ -2,8 +2,20 @@
 //  GAME STATE — builds the per-match state object from the form config
 // ============================================================
 
-import { BOT_IDS } from '../config.js';
+import { BOT_IDS, ACTIVE_CHALLENGE } from '../config.js';
 import { computePiecePositions, START_POS } from './hex.js';
+import { CHALLENGE_CARDS } from '../challenges.js';
+
+/** Start hex for a bot id, from the active challenge card (START_POS fallback). */
+function startHex(id) {
+  const starts = CHALLENGE_CARDS[ACTIVE_CHALLENGE]?.starts;
+  if (starts) {
+    const arr = id[0] === 'R' ? starts.red : starts.blue;
+    const c = arr?.[Number(id[1]) - 1];
+    if (c) return { col: c[0], row: c[1] };
+  }
+  return { ...START_POS[id] };
+}
 
 /**
  * Build initial game state for a match.
@@ -34,7 +46,7 @@ export function buildGameState(formConfig) {
       ...cfg,
       id,
       alliance,
-      pos:        { ...START_POS[id] },
+      pos:        startHex(id),
       lastPos:    null,
       maxCargo,
       heldCargo:  1,        // every bot preloads 1 cargo
@@ -46,7 +58,18 @@ export function buildGameState(formConfig) {
     };
   }
 
-  const pieces = computePiecePositions();
+  const card = CHALLENGE_CARDS[ACTIVE_CHALLENGE];
+  let pieces;
+  if (card && card.scoringModel !== 'shooter' && card.neutralPieces) {
+    // Charged Up: neutral cones + cubes (ids must match render pieces in pieces.js)
+    pieces = [];
+    (card.neutralPieces.cones || []).forEach(([c, r], i) =>
+      pieces.push({ id: `cone-${i}`, kind: 'cone', pos: { col: c, row: r }, taken: false }));
+    (card.neutralPieces.cubes || []).forEach(([c, r], i) =>
+      pieces.push({ id: `cube-${i}`, kind: 'cube', pos: { col: c, row: r }, taken: false }));
+  } else {
+    pieces = computePiecePositions();
+  }
 
   return { bots, pieces };
 }

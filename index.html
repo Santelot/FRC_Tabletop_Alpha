@@ -16,7 +16,7 @@
   <section class="screen screen--setup is-active" id="screen-setup">
 
     <header class="topbar">
-      <div class="topbar__title">FRC AUTON · 3D · v0.3</div>
+      <div class="topbar__title">FRC AUTON · 3D · v0.6</div>
       <div class="topbar__sub">Rapid React · Match setup</div>
     </header>
 
@@ -67,10 +67,13 @@
     <div class="match-topbar">
       <button id="btn-back" class="match-btn match-btn--back">← BACK TO SETUP</button>
       <div class="match-topbar__title">RAPID REACT · PRACTICE MATCH</div>
-      <div class="view-toggle">
-        <button class="view-btn is-active" data-view="broadcast">BROADCAST</button>
-        <button class="view-btn" data-view="topdown">TOP-DOWN</button>
-        <button class="view-btn" data-view="orbit">FREE ORBIT</button>
+      <div class="match-topbar__right" style="display:flex; gap:10px; align-items:center;">
+        <button id="btn-mute" class="match-btn" aria-pressed="false">SOUND OFF</button>
+        <div class="view-toggle">
+          <button class="view-btn is-active" data-view="broadcast">BROADCAST</button>
+          <button class="view-btn" data-view="topdown">TOP-DOWN</button>
+          <button class="view-btn" data-view="orbit">FREE ORBIT</button>
+        </div>
       </div>
     </div>
 
@@ -104,6 +107,9 @@
       </div>
 
     </div>
+
+    <!-- Begin Teleop — appears over the HUD when the auton finishes -->
+    <button id="btn-begin-teleop" class="begin-teleop is-hidden" type="button">BEGIN TELEOP ▸</button>
 
     <!-- Activity log — floating, collapsible -->
     <div class="match-log" id="match-log-wrap">

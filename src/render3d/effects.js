@@ -5,13 +5,14 @@
 import * as THREE from 'three';
 import { hexCenter, HUB_CENTER } from '../sim/hex.js';
 import { HEX_SIZE } from '../config.js';
-import { TIMING } from '../style.js';
+import { TIMING, CHARGE_DOCK } from '../style.js';
 
 // ============================================================
 //  Tween utility
 // ============================================================
 
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeInCubic = t => t * t * t;
 const easeInOutQuad = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
 function tween(durationMs, onUpdate, easing = easeOutCubic) {
@@ -192,6 +193,55 @@ export function spawnDefensiveAura(parentGroup, worldPos, blocks) {
     mat.opacity = eased * 0.55;
   });
   return m;
+}
+
+/**
+ * Block pins — drops a pin token onto each blocked hex (Defensive Set).
+ * `positions` is an array of world-space {x,z}; pins are alliance-coloured and
+ * pop in with a short stagger so the blockade reads as it's placed.
+ */
+export function spawnBlockPins(parentGroup, positions, alliance) {
+  if (!positions || !positions.length) return;
+  const color = alliance === 'red' ? 0xe63946 : 0x1e88e5;
+
+  positions.forEach((p, i) => {
+    const group = new THREE.Group();
+    group.position.set(p.x, 0, p.z);
+
+    // hex-shaped ground marker for the blocked cell
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(HEX_SIZE * 0.5, HEX_SIZE * 0.62, 6),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.rotation.z = Math.PI / 6;
+    ring.position.y = 0.05;
+    group.add(ring);
+
+    // the pin: tapered post + pale cap
+    const post = new THREE.Mesh(
+      new THREE.CylinderGeometry(HEX_SIZE * 0.10, HEX_SIZE * 0.16, HEX_SIZE * 0.9, 12),
+      new THREE.MeshStandardMaterial({ color, metalness: 0.35, roughness: 0.5, emissive: color, emissiveIntensity: 0.25 })
+    );
+    post.position.y = HEX_SIZE * 0.45;
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(HEX_SIZE * 0.22, 14, 14),
+      new THREE.MeshStandardMaterial({ color: 0xfff7e4, metalness: 0.2, roughness: 0.4, emissive: color, emissiveIntensity: 0.3 })
+    );
+    cap.position.y = HEX_SIZE * 0.95;
+    group.add(post, cap);
+
+    group.scale.setScalar(0.001);
+    parentGroup.add(group);
+
+    setTimeout(() => {
+      tween(420, eased => {
+        group.scale.setScalar(0.001 + eased);
+        group.position.y = (1 - eased) * HEX_SIZE * 0.8; // drops in from above
+        ring.material.opacity = eased * 0.7;
+      }).then(() => { group.position.y = 0; });
+    }, i * 130);
+  });
 }
 
 // ============================================================
@@ -377,4 +427,77 @@ export async function animatePickup(pieceMesh, botGroup) {
   });
 
   if (pieceMesh.parent) pieceMesh.parent.remove(pieceMesh);
+}
+
+// ============================================================
+//  CHARGED UP — placement + charge-station animations
+// ============================================================
+
+/**
+ * A scored cone/cube travels from the placing bot up into the grid rack and
+ * settles. `piece` is an outer group from loadModel(). `toXZ` is the rack node
+ * (already nudged by tier), `fromXZ` is the bot, `endY` the rack height.
+ */
+export async function spawnPlacedPiece(parentGroup, piece, toXZ, fromXZ, endY = 0) {
+  if (!piece) return;
+  parentGroup.add(piece);
+  const from = fromXZ || { x: toXZ.x, z: toXZ.z };
+  const startY = 1.1;
+  await tween(440, eased => {
+    piece.position.x = from.x + (toXZ.x - from.x) * eased;
+    piece.position.z = from.z + (toXZ.z - from.z) * eased;
+    // lift up out of the bot, arc over, drop into the rack at endY
+    piece.position.y = startY + (endY - startY) * eased + Math.sin(Math.PI * eased) * 1.0;
+  }, easeInOutQuad);
+  piece.position.set(toXZ.x, endY, toXZ.z);
+  await tween(150, eased => {
+    const s = 1 - Math.sin(Math.PI * eased) * 0.12;   // settle squash (outer scale starts at 1)
+    piece.scale.set(1 + (1 - s) * 0.5, s, 1 + (1 - s) * 0.5);
+  });
+  piece.scale.set(1, 1, 1);
+}
+
+/**
+ * Glow ring under a docked bot — gold = ENGAGED (balanced), cyan = DOCKED.
+ * Returns the ring so callers can keep it.
+ */
+export function spawnChargeDock(parentGroup, worldPos, engaged) {
+  const color = engaged ? CHARGE_DOCK.engagedColor : CHARGE_DOCK.dockColor;
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(HEX_SIZE * 0.55, HEX_SIZE * 0.92, 44),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(worldPos.x, (worldPos.y || 0) + 0.06, worldPos.z);
+  parentGroup.add(ring);
+  tween(520, eased => {
+    ring.material.opacity = eased * 0.9;
+    ring.scale.setScalar(0.55 + eased * 0.45);
+  });
+  return ring;
+}
+
+/**
+ * A charge bot climbs from its approach hex up onto the platform and settles.
+ * raiseY is tuned in style.js (CHARGE_DOCK.raiseY) to match the GLB height.
+ */
+export async function animateDockRaise(botGroup, targetXZ, raiseY, climbMs, engaged) {
+  if (!botGroup) return;
+  const start = botGroup.position.clone();
+  const endX = targetXZ.x, endZ = targetXZ.z;
+  await tween(climbMs, eased => {
+    botGroup.position.x = start.x + (endX - start.x) * eased;
+    botGroup.position.z = start.z + (endZ - start.z) * eased;
+    // climb the ramp: rise to raiseY with a little extra hop mid-way
+    botGroup.position.y = start.y + (raiseY - start.y) * eased + Math.sin(Math.PI * eased) * 0.22;
+  }, easeInOutQuad);
+  botGroup.position.set(endX, raiseY, endZ);
+  // settle bob
+  await tween(220, eased => { botGroup.position.y = raiseY - Math.sin(Math.PI * eased) * 0.12; });
+  botGroup.position.y = raiseY;
+  if (engaged) {
+    const baseZ = botGroup.rotation.z;
+    await tween(320, eased => { botGroup.rotation.z = baseZ + Math.sin(Math.PI * 2 * eased) * 0.05; });
+    botGroup.rotation.z = baseZ;
+  }
 }

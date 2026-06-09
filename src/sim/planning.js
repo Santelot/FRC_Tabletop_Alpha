@@ -7,7 +7,22 @@
 import {
   ROW_COUNTS, ROWS, hexKey, getNeighbors, hexDist, HUB_KEYS, START_POS,
 } from './hex.js';
-import { BOT_IDS, DRIVETRAINS } from '../config.js';
+import { BOT_IDS, DRIVETRAINS, ACTIVE_CHALLENGE } from '../config.js';
+import { CHALLENGE_CARDS } from '../challenges.js';
+
+/** Hexes a bot can't drive onto for the active challenge (solid structures). */
+function impassableKeys() {
+  const card = CHALLENGE_CARDS[ACTIVE_CHALLENGE];
+  if (!card || card.scoringModel === 'shooter') return HUB_KEYS;   // Rapid React: the hub
+  const keys = new Set();                                          // placement: the grids
+  for (const side of ['red', 'blue']) {
+    const g = card.grid?.[side];
+    if (g) [...g.cone, ...g.cube].forEach(([c, r]) => keys.add(hexKey({ col: c, row: r })));
+    const cs = card.chargeStation?.[side];                         // and the raised charge station
+    if (cs) [...(cs.edges || []), ...(cs.center || [])].forEach(([c, r]) => keys.add(hexKey({ col: c, row: r })));
+  }
+  return keys;
+}
 
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 const rand  = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1)) + lo;
@@ -90,6 +105,7 @@ export function planTick(state) {
   // Future occupancy: starts as everyone's current position. As each bot
   // claims its move, its old hex frees and the new one claims.
   const future = new Set(BOT_IDS.map(id => hexKey(state.bots[id].pos)));
+  const impassable = impassableKeys();
   const moves = {};
 
   for (const id of ordered) {
@@ -106,9 +122,9 @@ export function planTick(state) {
     future.delete(hexKey(bot.pos));
 
     const neighbors = getNeighbors(bot.pos);
-    // Hub is impassable (physical structure)
+    // Solid structures (hub / grids) are impassable
     const free = neighbors.filter(n =>
-      !future.has(hexKey(n)) && !HUB_KEYS.has(hexKey(n))
+      !future.has(hexKey(n)) && !impassable.has(hexKey(n))
     );
 
     if (free.length === 0) {
