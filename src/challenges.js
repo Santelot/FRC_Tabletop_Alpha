@@ -13,7 +13,18 @@
 //
 //  Coordinates match hex.js: [col, row]; red on the low-col (left)
 //  side, blue on the high-col (right) side, row 0 far / row 8 near.
+//
+//  NEW (v0.7): `scriptCopy` — per-challenge overrides for the auton
+//  playbook text. The base SCRIPTS in config.js are Rapid React
+//  (shooter) flavoured; a placement card overrides label/desc/detail/
+//  scores/tip so the setup screen reads correctly for its game.
+//  ui/setup.js merges these live when the challenge changes.
 // ============================================================
+
+import { BALANCE } from './balance.js';
+
+const RR_B = BALANCE.rapid_react;
+const CU_B = BALANCE.charged_up;
 
 export const CHALLENGE_CARDS = {
 
@@ -37,17 +48,17 @@ export const CHALLENGE_CARDS = {
 
     scoring: {
       kind: 'shoot',
-      points: { hit: 4 },
+      points: { hit: RR_B.auton.hubHit },
       accuracy: { 1: 50, 2: 75, 3: 90 },    // by SCORE tier
       steadied: { 1: 75, 2: 90, 3: 95 },    // Quick Score: one band sharper
     },
 
-    mobility: { points: 2 },                // taxi (Cross & Park)
+    mobility: { points: RR_B.auton.mobility },      // taxi (Cross & Park)
 
     endgame: {
       kind: 'climb',
       rounds: [7, 8],
-      points: 10,
+      points: RR_B.auton.climb,
       capability: { 0: 'none', 1: 'low', 2: 'mid', 3: 'high' },
     },
 
@@ -63,8 +74,8 @@ export const CHALLENGE_CARDS = {
     // teleop tracker buttons (consumed when the tracker is data-driven)
     teleop: {
       actions: [
-        { id: 'hub',   label: 'HUB',   points: 2,  undoLongPress: true },
-        { id: 'climb', label: 'CLIMB', points: 10, rounds: [7, 8] },
+        { id: 'hub',   label: 'HUB',   points: RR_B.teleop.hub,   undoLongPress: true },
+        { id: 'climb', label: 'CLIMB', points: RR_B.teleop.climb, rounds: [7, 8] },
       ],
     },
   },
@@ -126,22 +137,22 @@ export const CHALLENGE_CARDS = {
 
     scoring: {
       kind: 'place',
-      points: { high: 5, mid: 3 },          // tier; HIGH requires SCORE >= highMinScore
+      points: { high: CU_B.auton.high, mid: CU_B.auton.mid },   // tier; HIGH requires SCORE >= highMinScore
       highMinScore: 2,
       accuracy: { 1: 50, 2: 75, 3: 90 },    // placement "bobble" roll, by SCORE tier
       steadied: { 1: 75, 2: 90, 3: 95 },    // Quick Score (Place Preload)
       pieceMatch: true,                     // cones -> cone nodes, cubes -> cube nodes
     },
 
-    mobility: { points: 3 },                // leave community
+    mobility: { points: CU_B.auton.mobility },      // leave community
 
     // Shared charge station — scores in BOTH auto and endgame.
     endgame: {
       kind: 'charge',
       rounds: [7, 8],
       points: {
-        dock:   { auto: 8,  teleop: 6  },
-        engage: { auto: 12, teleop: 10 },
+        dock:   { auto: CU_B.auton.dock,   teleop: CU_B.teleop.dock   },
+        engage: { auto: CU_B.auton.engage, teleop: CU_B.teleop.engage },
       },
       // CLIMB tier -> where a bot may sit on the station
       capability: { 0: 'none', 1: 'none', 2: 'edge', 3: 'any' },
@@ -161,12 +172,54 @@ export const CHALLENGE_CARDS = {
       disruptor:     { kind: 'jam' },
     },
 
+    // ----------------------------------------------------------
+    //  Per-challenge auton copy. Any field omitted here falls back
+    //  to the base SCRIPTS text in config.js.
+    // ----------------------------------------------------------
+    scriptCopy: {
+      cross_park: {
+        label:  'Cross & Charge',
+        desc:   'Drive up and dock on the charge station.',
+        detail: 'Stage by your charge station and climb it before the buzzer. CLIMB L2 docks an edge; CLIMB L3 can take the center hex and balance solo. CLIMB 0\u20131 can\u2019t climb \u2014 it just leaves the community for mobility.',
+        scores: `+${CU_B.auton.dock} DOCK / +${CU_B.auton.engage} ENGAGED in auto  \u00b7  +${CU_B.auton.mobility} mobility fallback`,
+        tip:    'The anchor play. One L3 climber alone can ENGAGE the center; two L2s balancing the edges ENGAGE together.',
+      },
+      quick_score: {
+        label:  'Place Preload',
+        desc:   'Place the preloaded piece \u2014 steadied hands.',
+        detail: 'Place your preloaded cone or cube straight from the start with steadied accuracy (L1\u219275%, L2\u219290%, L3\u219295%), then cross the community line for mobility.',
+        scores: `+${CU_B.auton.high} HIGH / +${CU_B.auton.mid} MID  \u00b7  +${CU_B.auton.mobility} mobility  \u00b7  steadied 75/90/95%`,
+        tip:    'The reliable opener. Score L2+ reaches the HIGH row for +5; below that it places MID.',
+      },
+      triple_threat: {
+        label:  'Double Cycle',
+        desc:   'Place the preload, fetch a second piece, place again \u2014 then climb.',
+        detail: 'Place your preload, sprint to midfield for a second piece, return and place it at base accuracy \u2014 then climb the charge station if your CLIMB allows. The second piece needs INTAKE L2+ to carry.',
+        scores: `up to +${CU_B.auton.high * 2} placed  \u00b7  +${CU_B.auton.dock}/+${CU_B.auton.engage} charge  \u00b7  base 50/75/90%`,
+        tip:    'The ceiling play. With CLIMB L2+ this is the biggest auto in the game \u2014 but every leg of it can slip.',
+      },
+      defensive_set: {
+        label:  'Defensive Set',
+        desc:   'Contest the enemy cycle lane with pins.',
+        detail: 'Cross to the enemy\u2019s midfield cycle lane and drop blocking pins on the hexes their cyclers need. Grids, zones, and charge stations are protected \u2014 the open lane is fair game.',
+        scores: '0 direct  \u00b7  chokes their second-cycle lane',
+        tip:    'Aim it at an enemy Double Cycle \u2014 pins between the pieces and their grid hurt the most.',
+      },
+      disruptor: {
+        label:  'Disruptor',
+        desc:   'Jam the enemy\u2019s best placer before it scores.',
+        detail: 'Zap the opposing alliance\u2019s best placer right off the start: its next placement drops one accuracy tier and loses any steadied bonus.',
+        scores: '0 direct  \u00b7  their ace drops a full accuracy band',
+        tip:    'Fire it at their steadied preload \u2014 turning a 95% into a 75% swings real points.',
+      },
+    },
+
     teleop: {
       actions: [
-        { id: 'cone_high', label: 'CONE \u25B2', points: 5, tier: 'high', piece: 'cone' },
-        { id: 'cone_mid',  label: 'CONE',       points: 3, tier: 'mid',  piece: 'cone' },
-        { id: 'cube_high', label: 'CUBE \u25B2', points: 5, tier: 'high', piece: 'cube' },
-        { id: 'cube_mid',  label: 'CUBE',       points: 3, tier: 'mid',  piece: 'cube' },
+        { id: 'cone_high', label: 'CONE \u25B2', points: CU_B.teleop.high, tier: 'high', piece: 'cone' },
+        { id: 'cone_mid',  label: 'CONE',       points: CU_B.teleop.mid,  tier: 'mid',  piece: 'cone' },
+        { id: 'cube_high', label: 'CUBE \u25B2', points: CU_B.teleop.high, tier: 'high', piece: 'cube' },
+        { id: 'cube_mid',  label: 'CUBE',       points: CU_B.teleop.mid,  tier: 'mid',  piece: 'cube' },
         { id: 'charge',    label: 'CHARGE STATION', kind: 'charge', rounds: [7, 8] },
       ],
     },

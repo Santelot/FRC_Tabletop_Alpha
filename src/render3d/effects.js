@@ -1,11 +1,15 @@
 // ============================================================
 //  EFFECTS — particles, popups, hub pulse, auras, disruptor, rotation
 // ============================================================
+//  v0.7 adds the carried-piece system (attach/detach/fumble) so
+//  preloads and midfield pickups are VISIBLE on the bot — the single
+//  biggest readability fix for the Charged Up cycle.
+// ============================================================
 
 import * as THREE from 'three';
 import { hexCenter, HUB_CENTER } from '../sim/hex.js';
 import { HEX_SIZE } from '../config.js';
-import { TIMING, CHARGE_DOCK } from '../style.js';
+import { TIMING, CHARGE_DOCK, CARRIED_PIECE } from '../style.js';
 
 // ============================================================
 //  Tween utility
@@ -15,11 +19,19 @@ const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 const easeInCubic = t => t * t * t;
 const easeInOutQuad = t => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 
+// ---- Global playback speed (v0.9 fast-forward) ----
+//  setFxSpeed(3) makes every effect tween and sleep run 3× faster.
+//  main.js drives this from the ▸▸ button; 1 = normal.
+let fxSpeed = 1;
+export function setFxSpeed(mult) { fxSpeed = Math.max(0.25, mult || 1); }
+export function getFxSpeed() { return fxSpeed; }
+
 function tween(durationMs, onUpdate, easing = easeOutCubic) {
   return new Promise(resolve => {
     const start = performance.now();
+    const dur = durationMs / fxSpeed;
     function step(now) {
-      const t = Math.min((now - start) / durationMs, 1);
+      const t = Math.min((now - start) / dur, 1);
       onUpdate(easing(t), t);
       if (t < 1) requestAnimationFrame(step);
       else resolve();
@@ -28,7 +40,7 @@ function tween(durationMs, onUpdate, easing = easeOutCubic) {
   });
 }
 
-export const sleep = ms => new Promise(r => setTimeout(r, ms));
+export const sleep = ms => new Promise(r => setTimeout(r, ms / fxSpeed));
 
 // ============================================================
 //  ROTATION — turn a bot to face a world target
@@ -295,9 +307,21 @@ export function attachDisruptedRing(botGroup) {
     ring.rotation.z += dt * 1.4;
     requestAnimationFrame(spin);
   }
+
   requestAnimationFrame(spin);
 
   return ring;
+}
+
+/** Remove the disrupted ring(s) from a bot — the jam has been consumed. */
+export function clearDisruptedRing(botGroup) {
+  if (!botGroup) return;
+  const rings = botGroup.children.filter(c => c.userData && c.userData.isDisruptedRing);
+  rings.forEach(r => {
+    botGroup.remove(r);
+    if (r.geometry) r.geometry.dispose();
+    if (r.material) r.material.dispose();
+  });
 }
 
 // ============================================================
@@ -427,6 +451,85 @@ export async function animatePickup(pieceMesh, botGroup) {
   });
 
   if (pieceMesh.parent) pieceMesh.parent.remove(pieceMesh);
+}
+
+/**
+ * Pickup style 'vanish' — the floor piece simply sinks and shrinks away in
+ * place (no flight to the bot). Used by Rapid React, where the bot's glowing
+ * cargo indicators are the carried representation; flying the floor ball into
+ * the bot doubled it up. Never touches materials (clones share them).
+ */
+export async function animateVanish(pieceMesh) {
+  if (!pieceMesh) return;
+  const startY = pieceMesh.position.y;
+  const startScale = pieceMesh.scale.x;
+  await tween(240, (eased) => {
+    pieceMesh.scale.setScalar(Math.max(0.001, startScale * (1 - eased)));
+    pieceMesh.position.y = startY - eased * 0.25;
+  });
+  if (pieceMesh.parent) pieceMesh.parent.remove(pieceMesh);
+}
+
+// ============================================================
+//  CARRIED PIECES (v0.7) — the cone/cube visibly riding on a bot
+// ============================================================
+//  `pieceGroup` is an OUTER group from loadModel(): origin-clean, with
+//  the pivot/scale corrections on its inner child. Parenting the outer
+//  group to the bot and scaling IT keeps the model centred no matter
+//  what corrective transform the GLB needed — and we never touch
+//  materials (loader clones SHARE materials, so any material fade
+//  here would dim every other copy of that piece on the field).
+
+/** Attach a piece to a bot. It rides at CARRIED_PIECE.forward/height, pops in. */
+export function attachCarriedPiece(botGroup, pieceGroup) {
+  if (!botGroup || !pieceGroup) return null;
+  detachCarriedPiece(botGroup);                       // never stack two
+  pieceGroup.userData.isCarriedPiece = true;
+  pieceGroup.position.set(CARRIED_PIECE.forward, CARRIED_PIECE.height, 0);
+  pieceGroup.scale.setScalar(0.001);
+  botGroup.add(pieceGroup);
+  tween(260, eased => {
+    pieceGroup.scale.setScalar(0.001 + eased * (CARRIED_PIECE.scale - 0.001));
+  });
+  return pieceGroup;
+}
+
+/** Remove whatever piece a bot is carrying (placement consumed it). */
+export function detachCarriedPiece(botGroup) {
+  if (!botGroup) return;
+  const carried = botGroup.children.filter(c => c.userData && c.userData.isCarriedPiece);
+  carried.forEach(c => botGroup.remove(c));
+}
+
+/**
+ * Bobbled placement: the piece arcs ~60% of the way toward the node,
+ * hits the carpet, bounces, and shrinks away. Cargo is spent, the node
+ * stays open. `pieceGroup` is a fresh loadModel() outer group.
+ */
+export async function fumblePiece(parentGroup, pieceGroup, fromXZ, towardXZ) {
+  if (!pieceGroup) return;
+  pieceGroup.scale.setScalar(CARRIED_PIECE.scale);
+  pieceGroup.position.set(fromXZ.x, CARRIED_PIECE.height, fromXZ.z);
+  parentGroup.add(pieceGroup);
+
+  const dx = (towardXZ.x - fromXZ.x) * 0.6;
+  const dz = (towardXZ.z - fromXZ.z) * 0.6;
+  const startY = CARRIED_PIECE.height;
+
+  // arc out and drop short
+  await tween(420, eased => {
+    pieceGroup.position.x = fromXZ.x + dx * eased;
+    pieceGroup.position.z = fromXZ.z + dz * eased;
+    pieceGroup.position.y = startY * (1 - eased) + Math.sin(Math.PI * eased) * 0.55;
+  }, easeInOutQuad);
+
+  // sad little bounce + shrink out
+  await tween(360, (eased, t) => {
+    pieceGroup.position.y = Math.abs(Math.sin(Math.PI * 2 * t)) * 0.16 * (1 - t);
+    pieceGroup.scale.setScalar(CARRIED_PIECE.scale * (1 - eased));
+  });
+
+  parentGroup.remove(pieceGroup);
 }
 
 // ============================================================

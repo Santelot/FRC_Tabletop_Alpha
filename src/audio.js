@@ -207,6 +207,58 @@ const recipes = {
     tone({ freq: 170, freqEnd: 156, dur: 0.9, type: 'sawtooth', vol: 0.50 * v, attack: 0.012, release: 0.14, filterFreq: 1500 });
     tone({ freq: 81,  freqEnd: 76,  dur: 0.9, type: 'square',   vol: 0.40 * v, attack: 0.012, release: 0.14 }); // sub honk for body
   },
+
+  // ---------------------------------------------------------
+  //  added v0.7 — Charged Up placement + endgame
+  // ---------------------------------------------------------
+
+  // Cone/cube settles into the rack — soft thunk + bright bell (a lighter
+  // cousin of `hit`, pitched up so HUB hits and placements read differently).
+  place: (v) => {
+    tone({ freq: 190,  dur: 0.09, type: 'square', vol: 0.5 * v });
+    tone({ freq: 988,  dur: 0.30, type: 'sine',   vol: 0.45 * v, delay: 0.05 });
+    tone({ freq: 1480, dur: 0.34, type: 'sine',   vol: 0.28 * v, delay: 0.05 });
+  },
+
+  // Bobbled placement — sad descending wobble + a clatter of noise as
+  // the piece hits the carpet.
+  fumble: (v) => {
+    tone({ freq: 520, freqEnd: 180, dur: 0.28, type: 'triangle', vol: 0.55 * v });
+    tone({ freq: 470, freqEnd: 160, dur: 0.28, type: 'triangle', vol: 0.35 * v, detune: -10, delay: 0.03 });
+    noise({ dur: 0.16, vol: 0.4 * v, filter: 'bandpass', filterFreq: 700, filterQ: 1.5, delay: 0.16 });
+  },
+
+  // Climbing the charge station — an ascending mechanical ratchet
+  // (four rising clicks + a band of motor noise underneath).
+  climb: (v) => {
+    [330, 392, 494, 587].forEach((f, i) => {
+      tone({ freq: f, dur: 0.10, type: 'square', vol: 0.4 * v, delay: i * 0.085 });
+    });
+    noise({ dur: 0.30, vol: 0.22 * v, filter: 'bandpass', filterFreq: 1200, filterQ: 2, delay: 0.05 });
+  },
+
+  // ENGAGED! — short brass stab (a one-bar sting; the big "GO!" fanfare
+  // stays reserved for match start).
+  fanfare: (v) => {
+    const brass = (freq, t, dur, vol, detune = 0) => tone({
+      freq, dur, type: 'sawtooth', vol: vol * v,
+      attack: 0.015, release: 0.12, delay: t, detune, filterFreq: 2400,
+    });
+    brass(523, 0.00, 0.14, 0.40);        // C5 pickup
+    brass(659, 0.12, 0.42, 0.50,  5);    // E5 held, doubled ±detune
+    brass(659, 0.12, 0.42, 0.30, -5);
+    brass(523, 0.12, 0.42, 0.30);        // C5 under
+  },
+
+  // Crowd swell — layered band-passed noise with a couple of far-off
+  // whistle blips. Plays on ENGAGED and the final banner.
+  cheer: (v) => {
+    noise({ dur: 1.4, vol: 0.5 * v, filter: 'bandpass', filterFreq: 850,  filterQ: 0.7 });
+    noise({ dur: 1.1, vol: 0.3 * v, filter: 'bandpass', filterFreq: 1600, filterQ: 1.2, delay: 0.15 });
+    [1318, 1760].forEach((f, i) => tone({
+      freq: f, freqEnd: f * 1.06, dur: 0.18, type: 'sine', vol: 0.12 * v, delay: 0.25 + i * 0.3,
+    }));
+  },
 };
 
 /**

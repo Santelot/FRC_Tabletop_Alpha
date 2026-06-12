@@ -3,12 +3,20 @@
 // ============================================================
 //  Owns the renderer, camera, lights, ground plane, animation loop,
 //  fog, and the visible hub glow halo sprite.
+//
+//  v0.7: optional BLOOM post-processing (style.js → BLOOM) and a
+//  setHubFx() toggle so the hub halo + glow light only render for
+//  shooter challenges (no phantom gold glow at Charged Up midfield).
 // ============================================================
 
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { CAMERA_PRESETS, LIGHTING } from '../config.js';
-import { ATMOSPHERE, HUB_GLOW_HALO } from '../style.js';
+import { ATMOSPHERE, HUB_GLOW_HALO, BLOOM } from '../style.js';
 import { FIELD_W, FIELD_D, hexCenter, HUB_CENTER } from '../sim/hex.js';
 import { getFieldLineMaterials } from './field.js';
 
@@ -48,6 +56,34 @@ export class Scene {
     this.camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 200);
     this._applyCamera('broadcast');
 
+    // ---- Bloom composer (v0.7) ----
+    //  Multisampled render target keeps the MSAA we'd otherwise lose by
+    //  going through a composer. Anything that throws here (old GPU,
+    //  context limits) falls back to plain renderer.render — same app,
+    //  just no glow. Kill switch: BLOOM.enabled in style.js.
+    this.composer = null;
+    if (BLOOM.enabled) {
+      try {
+        const w = Math.max(1, this.canvas.clientWidth);
+        const h = Math.max(1, this.canvas.clientHeight);
+        const rt = new THREE.WebGLRenderTarget(w, h, {
+          samples: 4,
+          type: THREE.HalfFloatType,
+        });
+        this.composer = new EffectComposer(this.renderer, rt);
+        this.composer.addPass(new RenderPass(this.scene, this.camera));
+        this._bloomPass = new UnrealBloomPass(
+          new THREE.Vector2(w, h), BLOOM.strength, BLOOM.radius, BLOOM.threshold,
+        );
+        this.composer.addPass(this._bloomPass);
+        this.composer.addPass(new OutputPass());
+        this.composer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      } catch (err) {
+        console.warn('[scene] bloom unavailable, plain rendering:', err.message);
+        this.composer = null;
+      }
+    }
+
     // ---- Lights ----
     const L = LIGHTING;
 
@@ -82,6 +118,7 @@ export class Scene {
     );
     const hubXZ = hexCenter(HUB_CENTER.col, HUB_CENTER.row);
     this.hubGlow.position.set(hubXZ.x, L.hubGlow.position[1], hubXZ.z);
+    this.hubGlow.userData.baseIntensity = L.hubGlow.intensity;
     this.scene.add(this.hubGlow);
 
     // ---- Hub glow halo (visible sprite, makes the hub itself glow) ----
@@ -96,10 +133,15 @@ export class Scene {
         color: ATMOSPHERE.ground.color,
         roughness: ATMOSPHERE.ground.roughness,
         metalness: 0.0,
+        // pushed back in the depth buffer so it can never z-fight with the
+        // field model's own floor plate (the flickering dark rectangle)
+        polygonOffset: true,
+        polygonOffsetFactor: 2,
+        polygonOffsetUnits: 4,
       });
       this.ground = new THREE.Mesh(groundGeo, groundMat);
       this.ground.rotation.x = -Math.PI / 2;
-      this.ground.position.y = -0.01;
+      this.ground.position.y = ATMOSPHERE.ground.y ?? -0.08;
       this.ground.receiveShadow = true;
       this.scene.add(this.ground);
     }
@@ -184,12 +226,33 @@ export class Scene {
     }
   }
 
+  /**
+   * Show/hide the hub light + halo (v0.7).
+   * Shooter challenges (Rapid React) → true; placement challenges
+   * (Charged Up) → false, otherwise a phantom gold glow hangs over
+   * empty midfield carpet. Called by main.js in loadMatchAssets.
+   */
+  setHubFx(visible) {
+    if (this.hubHalo) this.hubHalo.group.visible = visible;
+    if (this.hubGlow) {
+      const base = this.hubGlow.userData.baseIntensity ?? this.hubGlow.intensity;
+      this.hubGlow.userData.baseIntensity = base;
+      this.hubGlow.intensity = visible ? base : 0;
+    }
+  }
+
   _onResize() {
     const w = this.canvas.clientWidth;
     const h = this.canvas.clientHeight;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
+
+    // Composer + bloom follow the canvas size
+    if (this.composer) {
+      this.composer.setSize(w, h);
+      if (this._bloomPass) this._bloomPass.resolution.set(w, h);
+    }
 
     // Line2 needs to know the screen resolution
     const lineMats = getFieldLineMaterials();
@@ -247,7 +310,8 @@ export class Scene {
     const dt = this._clock.getDelta();
     if (this.controls) this.controls.update();
     for (const fn of this._tickers) fn(dt);
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 
   dispose() {

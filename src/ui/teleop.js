@@ -1,12 +1,22 @@
 // ============================================================
-//  UI · TELEOP — full-screen post-auton calculator
+//  UI · TELEOP — the DRIVER STATION (v1.0)
 // ============================================================
-//  Deploys an opaque full-screen tracker (no 3D field). It RELOCATES the
-//  real match HUD scoreboard (ribbons + big numbers + team chips + gold
-//  center) to the top, then fills the rest of the screen with a spacious
-//  calculator: round bar, ON-DECK hero + UP NEXT queue, and scoring
-//  buttons generated from TELEOP_CONFIG.actions (data-driven for future
-//  multi-piece challenges). Drives the state machine in ../teleop.js.
+//  Full-screen post-auton tracker, rebuilt as a three-zone console:
+//
+//    DECK (left)     — the on-deck robot: identity, stats, and the
+//                      live movement diagram (engine unchanged).
+//    CONSOLE (center)— the scoring keypad. Keys are grouped by game
+//                      piece and wear its identity (cone gold, cube
+//                      violet, endgame cyan); HIGH keys sit taller
+//                      than MID, so a Charged Up console literally
+//                      reads like the grid. Locked endgame keys show
+//                      a live "R7 · in N" unlock countdown.
+//    FEED (right)    — UP NEXT queue + a play-by-play ticker of
+//                      every point scored, with UNDO LAST.
+//
+//  Still RELOCATES the real match HUD to the top, still drives the
+//  state machine in ../teleop.js, same deployTeleop/resetTeleop
+//  contract. Long-press-to-subtract on every key is unchanged.
 // ============================================================
 
 import { DRIVETRAINS } from '../config.js';
@@ -25,6 +35,7 @@ let onExit = null;
 let hudEl = null;         // the relocated .match-hud element
 let hudHome = null;       // where to put it back
 let els = {};
+let history = [];         // [{alliance, delta, label}] — fuels UNDO LAST
 
 // ============================================================
 //  ENTRY / TEARDOWN
@@ -33,6 +44,7 @@ export function deployTeleop({ screen, hud, config: cfg, scores, onExit: exit })
   resetTeleop();
   config = cfg;
   onExit = exit;
+  history = [];
   state = createTeleopState(scores);
 
   build(screen);
@@ -48,6 +60,7 @@ export function deployTeleop({ screen, hud, config: cfg, scores, onExit: exit })
   }
   refreshHudCenter();
   renderRounds();
+  if (els.feed) els.feed.innerHTML = '<div class="feed__empty">Every point lands here.</div>';
 
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.add('is-deployed')));
   resolveNext();
@@ -62,7 +75,7 @@ export function resetTeleop() {
   hudEl = null; hudHome = null;
   if (root) { root.remove(); root = null; }
   if (winnerEl) { winnerEl.remove(); winnerEl = null; }
-  state = null; config = null; els = {};
+  state = null; config = null; els = {}; history = [];
 }
 
 // ============================================================
@@ -76,8 +89,24 @@ function build(screen) {
     <button class="teleop__exit" id="tele-exit-top" type="button" title="Back to setup">EXIT</button>
     <div class="teleop__stage">
       <div class="teleop__rounds" id="tele-rounds"></div>
-      <div class="teleop__turn" id="tele-turn"></div>
-      <div class="teleop__controls" id="tele-controls"></div>
+      <div class="station">
+        <div class="station__deck" id="tele-turn"></div>
+        <div class="station__console">
+          <div class="console" id="tele-controls"></div>
+        </div>
+        <div class="station__feed">
+          <div class="feed__block">
+            <div class="feed__head">UP NEXT</div>
+            <div class="feed__next" id="tele-next"></div>
+          </div>
+          <div class="feed__block feed__block--grow">
+            <div class="feed__head">PLAY-BY-PLAY
+              <button class="feed__undo" id="tele-undo" type="button" title="Reverse the last entry">⟲ UNDO LAST</button>
+            </div>
+            <div class="feed__ticker" id="tele-feed"></div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
   screen.appendChild(root);
@@ -87,37 +116,69 @@ function build(screen) {
     rounds:   root.querySelector('#tele-rounds'),
     turn:     root.querySelector('#tele-turn'),
     controls: root.querySelector('#tele-controls'),
+    next:     root.querySelector('#tele-next'),
+    feed:     root.querySelector('#tele-feed'),
+    undo:     root.querySelector('#tele-undo'),
   };
 
   buildControls();
+  els.undo.addEventListener('click', undoLast);
   root.querySelector('#tele-exit-top').addEventListener('click', () => {
     resetTeleop();
     if (onExit) onExit();
   });
 }
 
+const GRP_TITLES = { hub: 'HUB', cone: 'CONE', cube: 'CUBE', endgame: 'ENDGAME' };
+
+function keyMarkup(a) {
+  const sign = a.points >= 0 ? '+' : '';
+  // Grouped piece keys show their TIER as the label; the cluster header
+  // already names the piece. Solo keys (HUB / DOCK / ENGAGE) keep theirs.
+  const label = a.tier ? a.tier.toUpperCase() : a.label;
+  return `
+    <button class="key key--${a.tone || 'gold'}${a.tier ? ` key--${a.tier}` : ''}"
+            id="tele-act-${a.id}" type="button">
+      <span class="key__label">${label}</span>
+      <span class="key__val">${sign}${a.points}</span>
+      ${a.hint ? `<span class="key__hint">${a.hint}</span>` : ''}
+      <span class="key__lock"></span>
+    </button>`;
+}
+
 function buildControls() {
   els.actionBtns = {};
-  let html = '';
-  for (const a of TELEOP_CONFIG.actions) {
-    const sign = a.points >= 0 ? '+' : '';
-    html += `
-      <button class="tele-btn tele-btn--${a.shape}" id="tele-act-${a.id}" type="button">
-        <span class="tele-btn__val">${sign}${a.points}</span>
-        <span class="tele-btn__label">${a.label}</span>
-        ${a.hint ? `<span class="tele-btn__hint">${a.hint}</span>` : ''}
-        <span class="tele-btn__lock">R${(a.rounds || []).join('–') || ''}</span>
-      </button>`;
-  }
-  html += `<button class="tele-btn tele-btn--end" id="tele-end" type="button">END TURN ▸</button>`;
-  els.controls.innerHTML = html;
+  const actions = TELEOP_CONFIG.actions;
 
-  for (const a of TELEOP_CONFIG.actions) {
+  // Cluster keys by group, preserving data order.
+  const groups = [];
+  for (const a of actions) {
+    const g = a.grp || (a.rounds ? 'endgame' : 'hub');
+    let bucket = groups.find(x => x.g === g);
+    if (!bucket) { bucket = { g, items: [] }; groups.push(bucket); }
+    bucket.items.push(a);
+  }
+
+  let html = '';
+  for (const { g, items } of groups) {
+    html += `
+      <div class="console__grp console__grp--${g}">
+        <div class="console__grp-head">${GRP_TITLES[g] || g.toUpperCase()}</div>
+        <div class="console__grp-keys">${items.map(keyMarkup).join('')}</div>
+      </div>`;
+  }
+  els.controls.innerHTML = html;
+  els.controls.insertAdjacentHTML('afterend', `
+    <div class="console__endbar">
+      <button class="tele-btn tele-btn--end" id="tele-end" type="button">END TURN ▸</button>
+    </div>`);
+
+  for (const a of actions) {
     const btn = els.controls.querySelector(`#tele-act-${a.id}`);
     els.actionBtns[a.id] = btn;
     wireAction(btn, a);
   }
-  els.end = els.controls.querySelector('#tele-end');
+  els.end = root.querySelector('#tele-end');
   els.end.addEventListener('click', onEnd);
 }
 
@@ -327,18 +388,16 @@ function renderActive() {
       </div>
       ${movementCell(id)}
     </div>
-    <div class="upnext">
-      <span class="upnext__lbl">UP NEXT</span>
-      <div class="upnext__row">
-        ${queue.length ? queue.map(miniChip).join('') : '<span class="upnext__empty">— last up this round —</span>'}
-      </div>
-    </div>
   `;
+  els.next.innerHTML = queue.length
+    ? queue.map(miniChip).join('')
+    : '<span class="upnext__empty">— last up this round —</span>';
   updateControls();
 }
 
 function renderChoice(candidates) {
   root.dataset.active = '';
+  els.next.innerHTML = '<span class="upnext__empty">— resolving turn —</span>';
   els.turn.innerHTML = `
     <div class="turn-choice">
       <span class="turn-choice__cue">TIE — TAP WHO PLAYS NEXT</span>
@@ -366,8 +425,22 @@ function updateControls() {
     const ok = canUse(a);
     btn.classList.toggle('is-locked', !ok);
     btn.disabled = !haveActive || !ok;
+    // Live lock caption: WHY it's locked, and when it opens.
+    const lock = btn.querySelector('.key__lock');
+    if (lock && !ok) {
+      if (!actionAvailable(a, state.round)) {
+        const opens = (a.rounds && a.rounds[0]) || 0;
+        const inN = Math.max(0, opens - state.round);
+        lock.textContent = inN > 0 ? `R${a.rounds.join('–')} · in ${inN}` : `R${a.rounds.join('–')}`;
+      } else if (a.minScore) {
+        lock.textContent = `NEEDS SCORE L${a.minScore}+`;
+      } else {
+        lock.textContent = 'LOCKED';
+      }
+    }
   }
   els.end.disabled = !haveActive;
+  if (els.undo) els.undo.disabled = history.length === 0;
 }
 
 /** Usable now? Round window + (for HIGH placements) the on-deck bot's Score tier. */
@@ -394,6 +467,7 @@ function onEnd() {
   if (!roundDone) { resolveNext(); return; }
 
   flourish(`ROUND ${state.round} DONE`);
+  feedEntry({ label: `— ROUND ${state.round} COMPLETE —`, kind: 'round' });
   updateControls();
   setTimeout(() => {
     const more = advanceRound(state);
@@ -406,14 +480,47 @@ function onEnd() {
 }
 
 // ============================================================
+//  PLAY-BY-PLAY FEED + UNDO LAST
+// ============================================================
+function feedEntry({ alliance, botId, label, delta, kind }) {
+  if (!els.feed) return;
+  const ph = els.feed.querySelector('.feed__empty');
+  if (ph) ph.remove();
+  const e = document.createElement('div');
+  e.className = `feed__item feed__item--${alliance || 'sys'}${kind ? ` feed__item--${kind}` : ''}`;
+  e.innerHTML = botId
+    ? `<b>${botId}</b><span class="feed__what">${label}</span><span class="feed__pts">${delta > 0 ? '+' : ''}${delta}</span>`
+    : `<span class="feed__what">${label}</span>`;
+  els.feed.prepend(e);
+  while (els.feed.children.length > 40) els.feed.lastElementChild.remove();
+}
+
+function undoLast() {
+  const last = history.pop();
+  if (!last) return;
+  applyScore(state, last.alliance, -last.delta);
+  setScore(last.alliance, state.scores[last.alliance]);
+  feedEntry({ alliance: last.alliance, botId: last.botId, label: `UNDO ${last.label}`, delta: -last.delta, kind: 'undo' });
+  play('miss');
+  if (els.undo) els.undo.disabled = history.length === 0;
+}
+
+// ============================================================
 //  SCORING (generic over the action data)
 // ============================================================
 function wireAction(btn, action) {
   const fire = (delta) => {
     if (!state.activeBot || !canUse(action)) return;
-    const alliance = config[state.activeBot].alliance;
+    const botId = state.activeBot;
+    const alliance = config[botId].alliance;
     applyScore(state, alliance, delta);
     setScore(alliance, state.scores[alliance]);           // reuse the HUD's big-number pump
+    const label = action.grp && action.tier
+      ? `${(GRP_TITLES[action.grp] || action.grp).toUpperCase()} ${action.tier.toUpperCase()}`
+      : action.label;
+    history.push({ alliance, botId, delta, label });
+    feedEntry({ alliance, botId, label, delta, kind: delta < 0 ? 'undo' : 'add' });
+    if (els.undo) els.undo.disabled = false;
     spawnPopup(btn, delta < 0 ? `${delta}` : `+${delta}`, delta < 0 ? 'undo' : 'add');
     pressPulse(btn, delta < 0 ? 'shake' : 'press');
     play(delta < 0 ? (action.undoSound || 'miss') : action.sound);

@@ -106,6 +106,7 @@ export const ATMOSPHERE = {
     enabled:   true,
     color:     0x17181c,//0x2c2d34,
     roughness: 0.95,
+    y:         -0.08,   // ← TUNE: lower (more negative) if you ever see floor flicker again
   },
 };
 
@@ -157,11 +158,33 @@ export const CHARGE_DOCK = {
 // ============================================================
 //  GRID PLACEMENT — where a scored piece ends up (TUNE to your grid GLB)
 // ============================================================
-//  dy    = height it rests at (L2/HIGH sits up in the rack, L1/MID lower)
-//  dInto = how far it nudges INTO the grid from the node hex (toward the wall)
+//  Base tiers, then optional PER-PIECE overrides (cones and cubes sit at
+//  different heights on the real rack). A piece resolves:
+//    base = GRID_PLACEMENT[tier]  →  override = GRID_PLACEMENT[kind][tier]
+//  Any field you set in the override wins; omit a field to inherit.
+//   dy    = resting height (L2/HIGH up in the rack, L1/MID lower)
+//   dInto = nudge INTO the grid from the node hex (toward the wall)
+//   dSide = sideways nudge along the wall (+ = toward higher rows)
+//  THE THREE AXES (every value tunable, per piece, per tier):
+//   dy    = UP            — resting height in the rack
+//   dInto = LONG AXIS     — toward/away from the grid wall, along the field's
+//                           wide side. Mirrored automatically: positive moves
+//                           BOTH alliances' pieces deeper into their own grid,
+//                           negative pulls them out toward the field.
+//   dSide = ALONG THE WALL — slides the piece sideways along the grid face.
 export const GRID_PLACEMENT = {
-  L1: { dy: 0.10, dInto: 0.20 },   // MID row
-  L2: { dy: 1.15, dInto: 0.60 },   // HIGH row — higher and deeper
+  L1: { dy: 0.10, dInto: 0.20, dSide: 0 },   // MID row base
+  L2: { dy: 1.15, dInto: 0.60, dSide: 0 },   // HIGH row base
+
+  // Per-piece overrides — any field set here beats the base tier value.
+  cone: {
+    L1: { dy: 1.8, dInto: -0.8, dSide: 0 },   // ← TUNE cone MID
+    L2: { dy: 3.2, dInto: 0.60, dSide: 0 },   // ← TUNE cone HIGH
+  },
+  cube: {
+    L1: { dy: 1, dInto: 1.2, dSide: 0 },   // ← TUNE cube MID
+    L2: { dy: 2, dInto: 2.3, dSide: 0 },   // ← TUNE cube HIGH
+  },
 };
 
 // ============================================================
@@ -225,8 +248,147 @@ export const AUDIO = {
     score:         0.6,
     park:          0.6,
     final:         0.8,
+
+    // ---- added v0.7 (Charged Up + match polish) ----
+    place:         0.65,   // cone/cube settles into the rack
+    fumble:        0.5,    // bobbled placement
+    climb:         0.6,    // charge-station climb ratchet
+    fanfare:       0.7,
+    cheer:         0.55,   // crowd swell (engaged / final banner)    // ENGAGED! brass stab
   },
 
   // How much to randomize the movement whir pitch (0 = none, 1 = ±100%).
   movePitchJitter: 0.3,
+};
+
+// ============================================================
+// ============================================================
+//  v0.7 ADDITIONS BELOW — broadcast-cut camera, bloom, carried
+//  pieces, recap card, finale. Everything above is untouched.
+//  Each block has an `enabled` kill switch.
+// ============================================================
+// ============================================================
+
+// ------------------------------------------------------------
+//  CAMERA DIRECTOR — the "broadcast cut" camera that pushes in
+//  on placements, jams, and climbs, then returns to your preset.
+// ------------------------------------------------------------
+export const CAMERA_DIRECTOR = {
+  enabled:      true,
+  respectOrbit: true,    // never hijack the camera while FREE ORBIT preset is active
+  moveMs:       850,     // fly duration per cut
+
+  // Framing per zoom level: distance from subject + camera height.
+  zoom: {
+    close: { dist: 13, height: 7.5 },
+    mid:   { dist: 20, height: 11  },
+    wide:  { dist: 30, height: 16  },
+    shot:  { dist: 20, height: 13.5 },  // ← TUNE: Rapid React shooter framing (bot + ball arc + hub)
+  },
+};
+
+// ------------------------------------------------------------
+//  BLOOM — post-processing glow on emissive surfaces (hub halo,
+//  cargo dots, pins, rings). Auto-falls-back to plain rendering
+//  if the GPU/context can't build the composer.
+// ------------------------------------------------------------
+export const BLOOM = {
+  enabled:   true,
+  strength:  0.4,     // 0.2 subtle → 0.8 neon
+  radius:    0.55,
+  threshold: 0.82,    // only pixels brighter than this bloom
+};
+
+// ------------------------------------------------------------
+//  CARRIED PIECE — the visible cone/cube riding on a bot
+//  (preloads + midfield pickups in placement challenges).
+// ------------------------------------------------------------
+export const CARRIED_PIECE = {
+  enabled: true,
+  forward: 0.55,   // local +X offset (in front of the bot)
+  height:  1.05,   // local Y (how high it rides)
+  scale:   0.65,   // piece scale while carried (1 = full size)
+};
+
+// ------------------------------------------------------------
+//  RECAP — the AUTON RECAP card after the final tally.
+// ------------------------------------------------------------
+export const RECAP = {
+  enabled:    true,
+  autoShowMs: 1100,   // delay after COMPLETE before the card slides in
+};
+
+// ------------------------------------------------------------
+//  FINALE — confetti fireworks on the final banner.
+// ------------------------------------------------------------
+export const FINALE = {
+  fireworks: true,
+  bursts:    6,      // number of confetti bursts
+  spreadMs:  1400,   // staggered across this window
+};
+
+// ------------------------------------------------------------
+//  INTRO — the MATCH PREVIEW lineup card (v0.8). Appears the
+//  moment RUN is pressed; assets load behind it; the gold
+//  START MATCH button arms when the field is ready.
+// ------------------------------------------------------------
+export const INTRO = {
+  enabled: true,
+};
+
+// ------------------------------------------------------------
+//  ARENA — stadium dressing (v0.8): score-reactive LED ribbon
+//  around the field, corner pylons, and the stage spotlight
+//  that follows the broadcast focus. All emissive geometry —
+//  no extra lights, and bloom makes the ribbon sing.
+// ------------------------------------------------------------
+export const ARENA = {
+  enabled: true,
+  margin:  0.9,                  // gap between field edge and the ribbon
+
+  led: {
+    height:        0.16,
+    thickness:     0.28,
+    baseColor:     0xffb627,     // idle gold
+    red:           0xe63946,     // pulse colors on score_update
+    blue:          0x1e88e5,
+    baseIntensity: 0.7,
+    pulseBoost:    1.8,          // added intensity on a score pulse
+    breath:        0.08,         // idle breathing depth (0 = static)
+  },
+
+  pylons: {
+    enabled:   true,
+    height:    2.6,
+    color:     0xffb627,
+    intensity: 0.5,
+  },
+
+  stage: {
+    enabled: true,
+    radius:  1.55,
+    color:   0xffd23f,
+    opacity: 0.16,               // disc opacity (ring runs ~2.6× this)
+  },
+};
+
+// ------------------------------------------------------------
+//  FFWD — the ▸▸ fast-forward toggle in the match top bar (v0.9).
+//  Speeds every pause, tween, bot move, banner, and camera flight.
+// ------------------------------------------------------------
+export const FFWD = {
+  enabled: true,
+  mult:    3,        // playback multiplier while engaged
+};
+
+// ------------------------------------------------------------
+//  COMMAND DECK — setup screen layout (v0.9). The alliances face
+//  off in two columns (RED | BLUE) under the mission rail
+//  (challenge → projected auto), with the playbook demoted to a
+//  collapsed reference at the bottom. Set enabled:false to fall
+//  back to the original single-column flow.
+// ------------------------------------------------------------
+export const COMMAND_DECK = {
+  enabled:    true,
+  breakpoint: 980,   // px — below this, columns stack again
 };

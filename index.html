@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0b11" />
   <title>FRC AUTON · 3D</title>
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
@@ -11,12 +12,22 @@
 <div class="app" id="app">
 
   <!-- ============================================================
+       HOME — title screen (v1.1)
+       ============================================================ -->
+  <section class="screen screen--home is-active" id="screen-home">
+    <div class="home" id="home-content"></div>
+  </section>
+
+  <!-- ============================================================
        SETUP SCREEN
        ============================================================ -->
-  <section class="screen screen--setup is-active" id="screen-setup">
+  <section class="screen screen--setup" id="screen-setup">
 
     <header class="topbar">
-      <div class="topbar__title">FRC AUTON · 3D · v0.6</div>
+      <div class="topbar__lead">
+        <button id="btn-home" class="topbar__home" type="button">◂ HOME</button>
+        <div class="topbar__title">FRC AUTON · 3D · v1.1</div>
+      </div>
       <div class="topbar__sub">Rapid React · Match setup</div>
     </header>
 

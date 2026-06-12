@@ -1,3 +1,4 @@
+import { BALANCE } from './balance.js';
 // ============================================================
 //  TELEOP — turn-order + scoring state machine
 // ============================================================
@@ -64,17 +65,20 @@ export const TELEOP_CONFIG = {
 };
 
 const ACTION_SETS = {
+  //  grp  — console cluster ('hub' | 'cone' | 'cube' | 'endgame')
+  //  tone — key color identity ('gold' | 'cone' | 'cube' | 'climb')
+  //  tier — 'high' | 'mid' (placement row; high keys render taller)
   rapid_react: [
-    { id: 'hub',   label: 'HUB',   points: 2,  shape: 'hub',   undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'hold = −2' },
-    { id: 'climb', label: 'CLIMB', points: 10, shape: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'endgame · R7–8' },
+    { id: 'hub',   label: 'HUB',   points: BALANCE.rapid_react.teleop.hub,  shape: 'hub',   grp: 'hub',     tone: 'gold',  undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'hold = −2' },
+    { id: 'climb', label: 'CLIMB', points: BALANCE.rapid_react.teleop.climb, shape: 'climb', grp: 'endgame', tone: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'endgame · R7–8' },
   ],
   charged_up: [
-    { id: 'cone_high', label: 'CONE ▲', points: 5,  shape: 'hub',   undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'high · needs Score L2+', minScore: 2 },
-    { id: 'cone_mid',  label: 'CONE',   points: 3,  shape: 'plain', undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'mid' },
-    { id: 'cube_high', label: 'CUBE ▲', points: 5,  shape: 'hub',   undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'high · needs Score L2+', minScore: 2 },
-    { id: 'cube_mid',  label: 'CUBE',   points: 3,  shape: 'plain', undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'mid' },
-    { id: 'dock',      label: 'DOCK',   points: 6,  shape: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'endgame · per bot' },
-    { id: 'engage',    label: 'ENGAGE', points: 10, shape: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'balanced · per bot' },
+    { id: 'cone_high', label: 'CONE ▲', points: BALANCE.charged_up.teleop.high,  shape: 'hub',   grp: 'cone',    tone: 'cone',  tier: 'high', undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'high · needs Score L2+', minScore: 2 },
+    { id: 'cone_mid',  label: 'CONE',   points: BALANCE.charged_up.teleop.mid,  shape: 'plain', grp: 'cone',    tone: 'cone',  tier: 'mid',  undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'mid' },
+    { id: 'cube_high', label: 'CUBE ▲', points: BALANCE.charged_up.teleop.high,  shape: 'hub',   grp: 'cube',    tone: 'cube',  tier: 'high', undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'high · needs Score L2+', minScore: 2 },
+    { id: 'cube_mid',  label: 'CUBE',   points: BALANCE.charged_up.teleop.mid,  shape: 'plain', grp: 'cube',    tone: 'cube',  tier: 'mid',  undo: true, rounds: null,   sound: 'score', undoSound: 'miss', hint: 'mid' },
+    { id: 'dock',      label: 'DOCK',   points: BALANCE.charged_up.teleop.dock,  shape: 'climb', grp: 'endgame', tone: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'endgame · per bot' },
+    { id: 'engage',    label: 'ENGAGE', points: BALANCE.charged_up.teleop.engage, shape: 'climb', grp: 'endgame', tone: 'climb', undo: true, rounds: [7, 8], sound: 'hit',   undoSound: 'miss', hint: 'balanced · per bot' },
   ],
 };
 

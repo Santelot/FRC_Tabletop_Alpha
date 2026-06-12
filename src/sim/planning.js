@@ -11,7 +11,7 @@ import { BOT_IDS, DRIVETRAINS, ACTIVE_CHALLENGE } from '../config.js';
 import { CHALLENGE_CARDS } from '../challenges.js';
 
 /** Hexes a bot can't drive onto for the active challenge (solid structures). */
-function impassableKeys() {
+export function impassableKeys() {
   const card = CHALLENGE_CARDS[ACTIVE_CHALLENGE];
   if (!card || card.scoringModel === 'shooter') return HUB_KEYS;   // Rapid React: the hub
   const keys = new Set();                                          // placement: the grids
@@ -70,8 +70,16 @@ export function planTarget(bot) {
  * For Triple Threat: dynamic next-target. If the bot has cargo capacity
  * and a piece is nearby (small detour), divert through the piece on the
  * way to the final shooting target.
+ *
+ *  ⚠ SHOOTER-ONLY. Placement autons (Charged Up) steer every leg
+ *  explicitly from sim/auton.js — an opportunistic divert there sends
+ *  bots wandering toward midfield pieces mid-cycle, which is exactly
+ *  the "makes no sense" drift of v4. Placement returns bot.target as-is.
  */
 export function getCurrentObjective(bot, state) {
+  const card = CHALLENGE_CARDS[ACTIVE_CHALLENGE];
+  if (card && card.scoringModel !== 'shooter') return bot.target;
+
   if (bot.script === 'triple_threat' && bot.heldCargo < bot.maxCargo) {
     const available = state.pieces.filter(p => !p.taken);
     if (available.length > 0) {
@@ -94,8 +102,46 @@ export function getCurrentObjective(bot, state) {
  * (lower initiative number wins). Bots can never end on the same hex,
  * never enter the hub.
  *
+ * Pathing (v1.6): each bot BFS-routes to its objective every tick around
+ * solid structures and every other bot's claimed hex, then takes the first
+ * step of that path. Real detours replace greedy hill-climbing, which used
+ * to orbit in pockets (charge station + grid wall + parked teammate).
+ * A frustration valve remains as the safety net: 8 ticks without a new
+ * best distance and the bot parks where it stands.
+ *
  * Returns: { [botId]: { col, row } }  — the chosen next position for each bot.
  */
+/**
+ * Breadth-first route from `start` to `goal` around `blocked` hexes.
+ * Returns the FIRST STEP of the shortest path, or null if no path exists
+ * right now (goal walled off or occupied).
+ */
+function bfsStep(start, goal, blocked) {
+  const sk = hexKey(start), gk = hexKey(goal);
+  if (sk === gk) return null;
+  const cameFrom = new Map([[sk, null]]);
+  const queue = [start];
+  let found = null;
+  while (queue.length) {
+    const cur = queue.shift();
+    if (hexKey(cur) === gk) { found = cur; break; }
+    for (const n of getNeighbors(cur)) {
+      const k = hexKey(n);
+      if (cameFrom.has(k) || blocked.has(k)) continue;
+      cameFrom.set(k, cur);
+      queue.push(n);
+    }
+  }
+  if (!found) return null;
+  let node = found;
+  let parent = cameFrom.get(hexKey(node));
+  while (parent && hexKey(parent) !== sk) {
+    node = parent;
+    parent = cameFrom.get(hexKey(node));
+  }
+  return node;
+}
+
 export function planTick(state) {
   const ordered = [...BOT_IDS].sort((a, b) =>
     DRIVETRAINS[state.bots[a].drivetrain].initiative -
@@ -112,8 +158,18 @@ export function planTick(state) {
     const bot = state.bots[id];
     const objective = getCurrentObjective(bot, state);
 
+    // Fresh leg? Reset the frustration tracker (best distance achieved).
+    const tKey = `${objective.col},${objective.row}`;
+    if (bot._targetKey !== tKey) {
+      bot._targetKey = tKey;
+      bot._bestDist = hexDist(bot.pos, objective);
+      bot._frustration = 0;
+    }
+
     // Already at objective AND objective is the final target → done
     if (bot.pos.col === objective.col && bot.pos.row === objective.row) {
+      bot._stuck = 0;
+      bot._frustration = 0;
       moves[id] = bot.pos;
       continue;
     }
@@ -121,44 +177,53 @@ export function planTick(state) {
     // Free up our current hex (we're trying to leave)
     future.delete(hexKey(bot.pos));
 
-    const neighbors = getNeighbors(bot.pos);
-    // Solid structures (hub / grids) are impassable
-    const free = neighbors.filter(n =>
-      !future.has(hexKey(n)) && !impassable.has(hexKey(n))
-    );
+    // Route around solids AND every other bot's claimed/current hex.
+    const blocked = new Set(impassable);
+    for (const k of future) blocked.add(k);
 
-    if (free.length === 0) {
-      // Stuck — stay put
+    const step = bfsStep(bot.pos, objective, blocked);
+
+    if (!step) {
+      // No path exists right now (goal walled off or someone parked on it).
+      // Hold position; the frustration valve parks us if it never opens.
+      bot._stuck = (bot._stuck || 0) + 1;
+      bot._frustration = (bot._frustration || 0) + 1;
+      settleIfHopeless(bot);
       moves[id] = bot.pos;
       future.add(hexKey(bot.pos));
       continue;
     }
 
-    free.sort((a, b) => hexDist(a, objective) - hexDist(b, objective));
-    const currentDist = hexDist(bot.pos, objective);
-    const minDist = hexDist(free[0], objective);
-
-    // If even the best option backtracks, stay put
-    if (minDist > currentDist) {
-      moves[id] = bot.pos;
-      future.add(hexKey(bot.pos));
-      continue;
+    bot._stuck = 0;
+    // Frustration tracks real progress: only a NEW best distance counts.
+    // (BFS detours can legitimately move away from the goal for a while —
+    // the 8-tick window in settleIfHopeless gives them room.)
+    const nd = hexDist(step, objective);
+    if (nd < (bot._bestDist ?? Infinity)) {
+      bot._bestDist = nd;
+      bot._frustration = 0;
+    } else {
+      bot._frustration = (bot._frustration || 0) + 1;
+      settleIfHopeless(bot);
     }
-
-    // Pick from equally-good options. Prefer hexes we didn't just come
-    // from (avoids oscillation around obstacles like the hub).
-    const tiedBest = free.filter(n => hexDist(n, objective) === minDist);
-    const fresh = bot.lastPos
-      ? tiedBest.filter(n => !(n.col === bot.lastPos.col && n.row === bot.lastPos.row))
-      : tiedBest;
-    const pool = fresh.length > 0 ? fresh : tiedBest;
-    const best = pool[Math.floor(Math.random() * pool.length)];
-
     bot.lastPos = bot.pos;
-    moves[id] = best;
-    future.add(hexKey(best));
+    moves[id] = step;
+    future.add(hexKey(step));
   }
   return moves;
+}
+
+/**
+ * A bot that has churned 8 ticks without setting a new best distance is
+ * never getting there this phase — park it where it stands so it reads
+ * as "holding position" instead of pacing in a pocket.
+ */
+function settleIfHopeless(bot) {
+  if ((bot._frustration || 0) >= 8) {
+    bot.target = { col: bot.pos.col, row: bot.pos.row };
+    bot._stuck = 0;
+    bot._frustration = 0;
+  }
 }
 
 /**
@@ -174,10 +239,16 @@ export function allBotsAtTarget(state) {
 /**
  * After a tick, check if any bots landed on a piece hex and pick it up.
  * Mutates state. Returns array of {botId, pieceId} pickups for the renderer.
+ *
+ * If `state.pickupEligible` (a Set of botIds) exists, ONLY those bots may
+ * pick up pieces. Charged Up sets it during the fetch leg so defenders and
+ * jammers crossing midfield don't accidentally vacuum up neutral pieces.
+ * Rapid React never sets it, so RR behaviour is unchanged.
  */
 export function resolvePickups(state) {
   const pickups = [];
   for (const id of BOT_IDS) {
+    if (state.pickupEligible && !state.pickupEligible.has(id)) continue;
     const bot = state.bots[id];
     if (bot.heldCargo >= bot.maxCargo) continue;
     const piece = state.pieces.find(p =>
