@@ -48,3 +48,48 @@ export const RULES = {
   // Pit Wall EV projections stay consistent automatically).
   mobilityEnabled: false,   // ← TUNE: flip to true to bring mobility back
 };
+
+// ============================================================
+//  BUILD_COSTS — the Pit Wall point-buy table (added v1.7)
+// ============================================================
+//  Every stat's Build Point (BP) cost lives HERE and only here.
+//  The Pit Wall reads this table for three things:
+//   • the BP shown next to every stat option in the selects
+//   • the live BP-spent chip on each bot card
+//   • RANDOMIZE, which now only deals builds that fit the budget
+//
+//  Keys under drivetrain must match the keys in config.js →
+//  DRIVETRAINS exactly (mecanum / tank / west_coast / swerve).
+//  Keys under scoring/intake/climber are the numeric levels.
+//
+//  Change a number → rebuild → done. ← TUNE freely.
+// ============================================================
+export const BUILD_COSTS = {
+  budget: 20,   // ← TUNE: starting Build Points per bot
+
+  drivetrain: {
+    mecanum:    2,   // ← TUNE: Mecanum  (omni,  1 hex/AP)
+    tank:       3,   // ← TUNE: Tank     (directional, 1 hex/AP)
+    west_coast: 5,   // ← TUNE: West Coast (directional, 2 hex/AP)
+    swerve:     9,   // ← TUNE: Swerve   (omni,  2 hex/AP)
+  },
+
+  scoring: {
+    1: 2,   // ← TUNE: Scoring L1
+    2: 4,   // ← TUNE: Scoring L2
+    3: 7,   // ← TUNE: Scoring L3
+  },
+
+  intake: {
+    1: 1,   // ← TUNE: Intake L1
+    2: 3,   // ← TUNE: Intake L2
+    3: 6,   // ← TUNE: Intake L3
+  },
+
+  climber: {
+    0: 0,   // ← TUNE: Climber L0 (no climb)
+    1: 2,   // ← TUNE: Climber L1
+    2: 4,   // ← TUNE: Climber L2
+    3: 7,   // ← TUNE: Climber L3
+  },
+};

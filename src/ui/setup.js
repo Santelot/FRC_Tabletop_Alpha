@@ -11,8 +11,12 @@
 //   • Each bot card carries its own EV chip, a drivetrain movement
 //     glyph (omni vs directional, 1 or 2 hex), and stat pips that
 //     visualize Score/Intake/Climb at a glance.
-//   • RANDOMIZE deals a fresh scrimmage; DEFAULTS restores the
-//     baseline loadout.
+//   • Every stat select shows its live BP cost, and each bot card
+//     carries a BP chip (spent / budget) that flips to a warning
+//     state if a manual build goes over budget. RANDOMIZE (added
+//     v1.7) now only deals builds that fit the budget; DEFAULTS
+//     restores the baseline loadout. All costs come from
+//     balance.js → BUILD_COSTS — tune the numbers there, not here.
 //
 //  Contracts preserved from earlier phases (nothing upstream breaks):
 //   - exports: buildSetupForm / readSetupState / showScreen
@@ -26,7 +30,7 @@ import { BOT_IDS, DEFAULTS, DRIVETRAINS, SCRIPTS, ACTIVE_CHALLENGE, setActiveCha
 import { CHALLENGE_CARDS, CHALLENGE_IDS } from '../challenges.js';
 import { COMMAND_DECK } from '../style.js';
 import { toast } from './toast.js';
-import { RULES } from '../balance.js';
+import { RULES, BUILD_COSTS } from '../balance.js';
 
 /**
  * Merged script copy for the ACTIVE challenge.
@@ -37,6 +41,29 @@ function scriptFor(key) {
   const base = SCRIPTS[key] || {};
   const over = CHALLENGE_CARDS[ACTIVE_CHALLENGE]?.scriptCopy?.[key] || {};
   return { ...base, ...over };
+}
+
+// ============================================================
+//  BUILD COSTS — Pit Wall point-buy (added v1.7)
+// ============================================================
+//  The only two functions that ever read BUILD_COSTS. Every cost
+//  shown anywhere in the Pit Wall (option labels, the BP chip,
+//  RANDOMIZE) goes through these, so there's exactly one place
+//  the table itself lives: balance.js.
+// ============================================================
+
+/** BP cost of a single stat value (a drivetrain key, or a scoring/intake/climber level). */
+function costFor(stat, val) {
+  const table = BUILD_COSTS[stat];
+  return table ? (table[val] ?? 0) : 0;
+}
+
+/** Total BP cost of a full build: { drivetrain, scoring, intake, climber }. */
+function buildCost(vals) {
+  return costFor('drivetrain', vals.drivetrain)
+       + costFor('scoring',    vals.scoring)
+       + costFor('intake',     vals.intake)
+       + costFor('climber',    vals.climber);
 }
 
 export function buildSetupForm() {
@@ -397,6 +424,28 @@ function recalcProjection() {
   if (ab) ab.textContent = `+${b.toFixed(1)}`;
 
   renderBriefs();
+  recalcBudgets();
+}
+
+/**
+ * Live BP-spent readout on each bot card (Pit Wall point-buy, v1.7).
+ * Reads BUILD_COSTS via buildCost() — nothing here is a number,
+ * it's all pulled from balance.js.
+ */
+function recalcBudgets() {
+  const bots = readSetupState();
+  BOT_IDS.forEach(id => {
+    const b = bots[id];
+    const chip = document.querySelector(`.bot[data-bot="${id}"] .pw-bp`);
+    if (!b || !chip) return;
+    const spent = buildCost(b);
+    const spentEl = chip.querySelector('.pw-bp__spent');
+    if (spentEl) spentEl.textContent = spent;
+    chip.classList.toggle('is-over', spent > BUILD_COSTS.budget);
+    chip.title = spent > BUILD_COSTS.budget
+      ? `Over budget: ${spent} / ${BUILD_COSTS.budget} BP`
+      : `Build Points spent / budget`;
+  });
 }
 
 /** One delegated listener: any select change anywhere in setup → repaint. */
@@ -421,17 +470,38 @@ function wireRecalc() {
 // ============================================================
 const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
+/**
+ * A random build that never exceeds the BP budget (balance.js →
+ * BUILD_COSTS.budget). Rejection-samples from the same mid-weighted
+ * distribution RANDOMIZE always used, so the "feel" of a scrimmage
+ * roll is unchanged — it just keeps re-rolling until the total is
+ * legal. Falls back to the cheapest legal minimum (mandatory
+ * Drivetrain + Scoring L1 + Intake L1, no Climber) if 300 tries
+ * somehow all miss, which shouldn't happen at any cost table we've
+ * tuned so far.
+ */
+function randomLegalBuild(budget) {
+  const dtKeys = Object.keys(DRIVETRAINS);
+
+  for (let attempt = 0; attempt < 300; attempt++) {
+    const vals = {
+      drivetrain: pick(dtKeys),
+      scoring:    pick([1, 2, 2, 3]),        // mid-weighted
+      intake:     pick([1, 2, 2, 3]),
+      climber:    pick([0, 0, 1, 2, 2, 3]),
+    };
+    if (buildCost(vals) <= budget) return vals;
+  }
+
+  const cheapestDt = dtKeys.reduce((a, b) =>
+    costFor('drivetrain', a) <= costFor('drivetrain', b) ? a : b);
+  return { drivetrain: cheapestDt, scoring: 1, intake: 1, climber: 0 };
+}
+
 function randomizeLoadout() {
-  const dts = Object.keys(DRIVETRAINS);
   const scripts = Object.keys(SCRIPTS);
   BOT_IDS.forEach(id => {
-    setBotValues(id, {
-      drivetrain: pick(dts),
-      scoring:    pick([1, 2, 2, 3]),       // mid-weighted
-      intake:     pick([1, 2, 2, 3]),
-      climber:    pick([0, 1, 2, 2, 3]),
-      script:     pick(scripts),
-    });
+    setBotValues(id, { ...randomLegalBuild(BUILD_COSTS.budget), script: pick(scripts) });
   });
   refreshScriptCopy();
   recalcProjection();
@@ -499,7 +569,7 @@ function buildAutonPlaybook() {
 }
 
 // ============================================================
-//  BOT CARDS — drivetrain glyph, stat pips, EV chip
+//  BOT CARDS — drivetrain glyph, stat pips, EV chip, BP chip
 // ============================================================
 
 //  Board-game movement identity (the 2×2 speed/steering grid).
@@ -568,7 +638,7 @@ function buildBotConfig(botId) {
     <div class="pw-stat">
       <label class="pw-stat__lbl">${label}</label>
       <select data-stat="${stat}">
-        ${levels.map(t => `<option value="${t}" ${t === val ? 'selected' : ''}>L${t}</option>`).join('')}
+        ${levels.map(t => `<option value="${t}" ${t === val ? 'selected' : ''}>L${t} · ${costFor(stat, t)} BP</option>`).join('')}
       </select>
       <div class="pw-pips">${levels.filter(t => t > 0).map(t =>
         `<span class="${t <= val ? 'is-on' : ''}"></span>`).join('')}</div>
@@ -580,9 +650,10 @@ function buildBotConfig(botId) {
       <span class="pw-glyph">${dtGlyph(def.drivetrain)}</span>
       <select data-stat="drivetrain" class="pw-dt">
         ${Object.entries(DRIVETRAINS).map(([k, v]) =>
-          `<option value="${k}" ${k === def.drivetrain ? 'selected' : ''}>${v.label}</option>`
+          `<option value="${k}" ${k === def.drivetrain ? 'selected' : ''}>${v.label} · ${costFor('drivetrain', k)} BP</option>`
         ).join('')}
       </select>
+      <span class="pw-bp" title="Build Points spent / budget">BP <b class="pw-bp__spent">${buildCost(def)}</b>/<b>${BUILD_COSTS.budget}</b></span>
       <span class="pw-ev" title="Projected auto points for this bot">EV <b>+0.0</b></span>
     </div>
     <div class="pw-stats">
@@ -713,7 +784,7 @@ function injectPitwallStyles() {
     .pw-bot--red:hover  { border-color: rgba(230,57,70,.55); }
     .pw-bot--blue:hover { border-color: rgba(30,136,229,.55); }
 
-    .pw-head { display:flex; align-items:center; gap:10px; }
+    .pw-head { display:flex; align-items:center; gap:10px; flex-wrap: wrap; }
     .pw-id { font-family:'Bowlby One',sans-serif; font-size: clamp(18px,1.9vw,22px); color:#fff; }
     .pw-bot--red  .pw-id { text-shadow: 0 0 14px rgba(230,57,70,.5); }
     .pw-bot--blue .pw-id { text-shadow: 0 0 14px rgba(30,136,229,.5); }
@@ -725,6 +796,15 @@ function injectPitwallStyles() {
       padding:6px 8px; border-radius:8px; background: rgba(255,210,63,.08);
       border:1px solid rgba(255,210,63,.25); }
     .pw-ev b { color: var(--gold,#ffd23f); font-size:12px; margin-left:3px; }
+
+    /* ---- BP chip (added v1.7) — mirrors .pw-ev, warns red when over budget ---- */
+    .pw-bp { font:700 10px/1 'JetBrains Mono',monospace; letter-spacing:.08em;
+      color: var(--txt-soft,#9aa0b4); white-space:nowrap;
+      padding:6px 8px; border-radius:8px; background: rgba(255,210,63,.08);
+      border:1px solid rgba(255,210,63,.25); transition: background .15s, border-color .15s; }
+    .pw-bp b { color: var(--gold,#ffd23f); font-size:12px; }
+    .pw-bp.is-over { background: rgba(230,57,70,.14); border-color: rgba(230,57,70,.55); }
+    .pw-bp.is-over b { color: var(--red,#e63946); }
 
     .pw-stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; }
     .pw-stat { display:flex; flex-direction:column; gap:5px; }
